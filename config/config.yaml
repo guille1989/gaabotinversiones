@@ -1,0 +1,59 @@
+# Configuración de GaaInversiones: TODOS los parámetros viven aquí.
+# Se valida al arrancar; un valor fuera de rango detiene el programa con un mensaje claro.
+# Los secretos (claves, tokens) NO van aquí: van en .env (ver .env.example).
+# Las rutas relativas se interpretan respecto a la raíz del proyecto.
+
+# paper (por defecto) | real. "real" exige además GAA_PERMITIR_REAL=si en .env
+# y una confirmación manual al arrancar.
+modo: paper
+
+mercado:
+  exchange: kraken        # exchange donde se opera (paper y real)
+  simbolo: BTC/EUR
+  temporalidad: 4h        # velas de 4 horas: menos operaciones, menos comisiones
+
+datos:
+  # La API de velas de Kraken solo devuelve las últimas 720 velas, así que el
+  # histórico largo sale de otra fuente. Opciones:
+  #   bitstamp -> descarga automática por API (BTC/EUR desde 2016 aprox.)
+  #   kraken   -> importa el CSV oficial con `gaa datos importar-kraken` y luego
+  #               `gaa datos descargar` lo mantiene al día con la API.
+  fuente_historica: bitstamp
+  desde: "2017-01-01"
+  directorio: data
+  # Velas ausentes (periodos sin operaciones o caídas del exchange): al leer se
+  # rellenan con velas planas de volumen 0 marcadas como sintéticas.
+  rellenar_huecos: true
+
+estrategia:
+  nombre: cruce_medias_rsi   # estrategia DIDÁCTICA de ejemplo
+  parametros:
+    media_rapida: 20
+    media_lenta: 50
+    rsi_periodo: 14
+    rsi_max_entrada: 70
+
+riesgo:
+  riesgo_por_operacion: 0.01   # 1 % del capital arriesgado por operación
+  atr_periodo: 14
+  sl_atr: 2.0                  # stop-loss a 2 x ATR del precio de entrada
+  tp_atr: 3.0                  # take-profit a 3 x ATR
+  perdida_diaria_max: 0.03     # -3 % en el día UTC -> cierra y detiene el bot
+  caida_max: 0.15              # -15 % desde el máximo de capital -> cierra y detiene
+  exposicion_max: 1.0          # fracción máxima del capital invertida (spot: <= 1)
+
+costes:
+  # Tramo base de Kraken Pro. Revísalo en https://www.kraken.com/features/fee-schedule
+  comision_maker: 0.0025
+  comision_taker: 0.0040
+  deslizamiento_pb: 5          # puntos básicos (5 pb = 0,05 %) por ejecución a mercado
+
+paper:
+  capital_inicial: 1000.0      # EUR
+
+registro:
+  nivel: INFO
+  directorio: logs
+  fichero: gaainversiones.log
+  max_bytes: 5000000
+  copias: 5

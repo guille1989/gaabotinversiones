@@ -1,0 +1,23 @@
+# Secretos: NUNCA al repositorio
+.env
+.env.*
+!.env.example
+
+# Entorno y cachés de Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Datos generados en tiempo de ejecución
+data/
+logs/
+informes/
+
+# Kill switch
+STOP

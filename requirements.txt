@@ -1,0 +1,11 @@
+# Dependencias de ejecución con versiones fijadas (para el VPS / Raspberry Pi).
+# Para desarrollo: pip install -e ".[dev]"
+ccxt==4.5.88
+pandas==3.0.6
+numpy==2.5.4
+PyYAML==6.0.3
+pydantic==2.14.1
+python-dotenv==1.2.4
+requests==2.34.2
+plotly==7.1.0
+Jinja2==3.1.6
