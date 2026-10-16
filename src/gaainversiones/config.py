@@ -200,6 +200,17 @@ class ConfigPaper(_Base):
     profundidad_libro: int = Field(50, ge=1, le=500)
 
 
+class ConfigReal(_Base):
+    """Operativa con dinero real (solo con modo: real y el doble cerrojo)."""
+
+    capital_maximo: float = Field(500.0, gt=0)  # EUR que el bot puede usar, aunque haya más
+    tipo_orden: Literal["limite", "mercado"] = "limite"
+    limite_margen_pb: float = Field(10.0, ge=0, le=200)  # precio límite: mejor precio ± margen
+    espera_limite_s: int = Field(20, ge=2, le=600)  # tiempo para llenarse antes de cancelar
+    intentos_limite: int = Field(3, ge=1, le=10)
+    mercado_si_no_se_llena: bool = True  # el resto, a mercado tras los intentos límite
+
+
 class ConfigAlertas(_Base):
     """Avisos por Telegram (token y chat id en .env) y órdenes desde el móvil."""
 
@@ -287,6 +298,7 @@ class Config(_Base):
     paper: ConfigPaper = Field(default_factory=ConfigPaper)
     bot: ConfigBot = Field(default_factory=ConfigBot)
     alertas: ConfigAlertas = Field(default_factory=ConfigAlertas)
+    real: ConfigReal = Field(default_factory=ConfigReal)
     registro: ConfigRegistro = Field(default_factory=ConfigRegistro)
     secretos: Secretos = Field(default_factory=Secretos, exclude=True)
     raiz: Path = Field(default_factory=Path.cwd, exclude=True)

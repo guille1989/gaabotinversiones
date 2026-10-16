@@ -159,7 +159,7 @@ class Bot:
         mensajes: Mensajes = []
         cuenta = self.almacen.cargar_cuenta()
         if cuenta is None:
-            capital = self.broker.saldos().cotizada
+            capital = self.broker.capital_para_cuenta_nueva()
             cuenta = EstadoCuenta.nueva(capital)
             mensajes.append(self._evento(f"Cuenta nueva con {self._dinero(capital)}"))
         if cuenta.estado == "detenido":
@@ -375,6 +375,13 @@ class Bot:
         except Exception:
             self.cuenta = self.almacen.cargar_cuenta()  # deshace los cambios en memoria
             raise
+        posicion = cuenta.posicion
+        perdidos = self.broker.stops_perdidos()
+        if posicion is not None and posicion.id_orden_stop in perdidos:
+            mensajes.append(
+                self._evento("El stop de la posición desapareció del exchange", "error")
+            )
+            mensajes += self._proteger_posicion()
         return mensajes
 
     def _procesar_vela(self, ts: int, procesada: int | None) -> Mensajes:

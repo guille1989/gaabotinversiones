@@ -5,7 +5,8 @@ una estrategia ganadora de partida, sino una infraestructura fiable para **proba
 estrategias y descartar las malas antes de arriesgar dinero**: datos limpios, backtest
 honesto, paper trading realista y, solo si los resultados lo justifican, operativa real.
 
-> Estado: **fase 4 de 6** (datos, backtest, bot en paper, Telegram y kill switch).
+> Estado: **fase 5 de 6** (todo listo salvo el despliegue 24/7; el modo real está
+> implementado y probado contra un exchange simulado, pero **no activado**).
 
 ## Requisitos
 
@@ -54,8 +55,9 @@ En modo paper no hacen falta claves: los precios se leen de la API pública.
 ### Modo real (doble cerrojo)
 
 El modo por defecto es `paper`. Para operar con dinero real hacen falta las tres cosas:
-`modo: real` en `config.yaml`, `GAA_PERMITIR_REAL=si` en `.env` y una confirmación manual
-al arrancar (fase 5).
+`modo: real` en `config.yaml`, `GAA_PERMITIR_REAL=si` (y las claves) en `.env` y
+escribir a mano `OPERAR CON DINERO REAL` al ejecutar `gaa real` en una terminal (ver
+[Modo real](#modo-real)).
 
 ## Datos históricos
 
@@ -208,6 +210,33 @@ Desde el móvil (solo se obedece a tu chat id; el resto se ignora y se registra)
   directamente (antes recoge los stops que hayan saltado).
 - Tras una parada manual (o por caída máxima) el bot no arranca hasta `gaa reanudar`.
 
+## Modo real
+
+> No lo actives sin haber completado la lista de comprobación previa (fase 6) y sin
+> semanas de paper con resultados que lo justifiquen.
+
+`gaa real` usa exactamente el mismo bot que el paper, con un broker que envía órdenes a
+Kraken:
+
+- **Capital limitado:** el bot solo usa `real.capital_maximo` aunque la cuenta tenga más.
+  La cuenta (o subcuenta) debe ser **exclusiva del bot** para la moneda base (BTC): si
+  hay BTC que el bot no conoce, la reconciliación lo detecta y no opera.
+- **Órdenes límite por defecto:** precio tope = mejor precio contrario ± `limite_margen_pb`.
+  Si no se llena en `espera_limite_s`, se cancela lo pendiente y se reintenta hasta
+  `intentos_limite` veces; lo que falte va a mercado (`mercado_si_no_se_llena`).
+  Los llenados parciales se suman en una sola ejecución con su precio medio y comisiones.
+- **Sin órdenes duplicadas:** cada orden lleva un `clientOrderId` determinista; antes de
+  crearla, y tras cualquier timeout, se comprueba si ya existe en el exchange.
+- **Stop-loss nativo de Kraken** (`stop-loss`): protege aunque el bot esté caído. Si
+  alguien lo cancela a mano, el bot lo vuelve a colocar.
+- **Confirmación manual ligada a la configuración:** se guarda una huella de la
+  configuración y de la clave de API. Los reinicios automáticos la reutilizan; cualquier
+  cambio, el kill switch, una parada por caída máxima o `gaa reanudar --modo real`
+  obligan a confirmar otra vez en una terminal. Sin terminal (systemd) no arranca.
+
+Comandos: `gaa real`, `gaa estado --modo real`, `gaa parar --modo real [--liquidar]`,
+`gaa reanudar --modo real`, `gaa exportar --modo real`.
+
 ## Tests
 
 ```bash
@@ -229,7 +258,8 @@ src/gaainversiones/
   datos/                  fuentes (ccxt, CSV Kraken), caché SQLite, calidad, servicio
   estrategias/            interfaz Estrategia, registro y cruce_medias_rsi (didáctica)
   riesgo/gestor.py        tamaño, stop/objetivo por ATR, exposición y paradas
-  ejecucion/              costes, interfaz Broker y PaperBroker
+  ejecucion/              costes, interfaz Broker, PaperBroker y RealBroker
+  autorizacion.py         confirmación manual del modo real
   cuenta.py               efectivo, posición, ejecuciones y operaciones
   nucleo.py               ciclo de decisión común a backtest, paper y real
   backtest/               motor, métricas, optimización, walk-forward e informes HTML
@@ -248,5 +278,5 @@ tests/
 3. ✅ PaperBroker, estado persistente y bucle en vivo en modo paper
    - 3b. Panel web (Streamlit, solo lectura): estado del bot, operaciones y backtests
 4. ✅ Alertas por Telegram y kill switch
-5. RealBroker (desactivado) con tests sobre un exchange simulado
+5. ✅ RealBroker (desactivado) con tests sobre un exchange simulado
 6. Despliegue 24/7 (systemd / Docker) y lista de comprobación previa a operar en real

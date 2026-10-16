@@ -7,11 +7,18 @@ import argparse
 import logging
 import signal
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 from typing import Any, Literal
 
+from gaainversiones.autorizacion import (
+    FRASE_CONFIRMACION,
+    autorizacion_vigente,
+    conceder,
+    revocar,
+)
 from gaainversiones.bot import Bot, BotDetenido, BotYaEnMarcha
 from gaainversiones.bot.killswitch import FicheroParada, FuenteOrdenes, escribir_parada
 from gaainversiones.bot.notificador import Notificador, NotificadorLog
@@ -25,6 +32,7 @@ from gaainversiones.config import Config
 from gaainversiones.datos import FuenteCCXT
 from gaainversiones.ejecucion.costes import ModeloCostes
 from gaainversiones.ejecucion.paper import PaperBroker
+from gaainversiones.ejecucion.real import RealBroker
 from gaainversiones.estado.almacen import AlmacenEstado
 from gaainversiones.estado.reconciliacion import ErrorReconciliacion
 from gaainversiones.exchange import crear_exchange
@@ -99,6 +107,103 @@ def crear_bot_paper(cfg: Config, almacen: AlmacenEstado) -> Bot:
     )
 
 
+def crear_bot_real(cfg: Config, almacen: AlmacenEstado) -> Bot:
+    """Bot con dinero real. Solo debe llamarse tras comprobar el doble cerrojo."""
+    if cfg.modo != "real" or not cfg.secretos.permitir_real:
+        raise ValueError("Modo real no permitido por la configuración")
+    assert cfg.secretos.api_key is not None and cfg.secretos.api_secret is not None
+    notificador, ordenes = avisos_y_ordenes(cfg, almacen, "REAL")
+    exchange = crear_exchange(
+        cfg.mercado.exchange,
+        api_key=cfg.secretos.api_key.get_secret_value(),
+        api_secret=cfg.secretos.api_secret.get_secret_value(),
+    )
+    broker = RealBroker(
+        exchange,
+        cfg.mercado.simbolo,
+        cfg.real,
+        almacen,
+        limites_por_defecto=LimitesMercado.desde_config(cfg.mercado),
+    )
+    return Bot(
+        cfg,
+        broker,
+        almacen,
+        FuenteCCXT(exchange, silenciosa=True),
+        notificador=notificador,
+        ordenes=ordenes,
+    )
+
+
+def crear_bot(cfg: Config, almacen: AlmacenEstado, modo: str) -> Bot:
+    return crear_bot_real(cfg, almacen) if modo == "real" else crear_bot_paper(cfg, almacen)
+
+
+def _pedir_confirmacion_real(cfg: Config, bot: Bot, entrada: Callable[[str], str] = input) -> bool:
+    """Muestra lo que va a pasar y exige escribir la frase de confirmación."""
+    saldos = bot.broker.saldos()
+    cot, base = cfg.mercado.cotizada, cfg.mercado.base
+    print("\n=== MODO REAL: se operará con dinero de verdad ===")
+    print(f"Exchange: {cfg.mercado.exchange} · {cfg.mercado.simbolo} {cfg.mercado.temporalidad}")
+    print(f"Estrategia: {bot.estrategia.describir()}")
+    print(
+        f"Saldos en el exchange: {formato_dinero(saldos.cotizada, cot)} · {saldos.base:.8f} {base}"
+    )
+    print(
+        f"Capital máximo del bot: {formato_dinero(cfg.real.capital_maximo, cot)} · riesgo "
+        f"{formato_pct(cfg.riesgo.riesgo_por_operacion)} por operación · caída máxima "
+        f"{formato_pct(cfg.riesgo.caida_max, 0)}"
+    )
+    try:
+        respuesta = entrada(f"Para continuar escribe exactamente: {FRASE_CONFIRMACION}\n> ")
+    except EOFError:
+        return False
+    return respuesta.strip() == FRASE_CONFIRMACION
+
+
+def cmd_real(cfg: Config, args: argparse.Namespace) -> int:
+    if cfg.modo != "real":
+        print(
+            "El modo real exige `modo: real` en config.yaml, GAA_PERMITIR_REAL=si y las claves "
+            "de API en .env, y confirmar a mano al arrancar. Revisa antes la lista de "
+            "comprobación del README.",
+            file=sys.stderr,
+        )
+        return 2
+    vigente = autorizacion_vigente(cfg)
+    if not vigente and not sys.stdin.isatty():
+        print(
+            "Falta la confirmación manual (o la configuración cambió desde la última): "
+            "ejecuta `gaa real` en una terminal.",
+            file=sys.stderr,
+        )
+        return 2
+    with abrir_almacen(cfg, "real") as almacen:
+        bot = crear_bot_real(cfg, almacen)
+        if not vigente:
+            if not _pedir_confirmacion_real(cfg, bot):
+                print("Cancelado: el bot NO ha arrancado.")
+                return 1
+            conceder(cfg)
+            almacen.registrar_evento("Modo real confirmado a mano", nivel="aviso")
+
+        def parar(senal: int, marco: FrameType | None) -> None:
+            bot.parar()
+
+        if hasattr(signal, "SIGTERM"):
+            signal.signal(signal.SIGTERM, parar)
+        try:
+            bot.ejecutar()
+        except (BotYaEnMarcha, BotDetenido, ErrorReconciliacion) as e:
+            print(f"No se puede arrancar: {e}", file=sys.stderr)
+            return 2
+        finally:
+            cuenta = almacen.cargar_cuenta()
+            if cuenta is not None and cuenta.estado == "detenido":
+                revocar(cfg)  # tras una parada, volver a operar exige confirmar de nuevo
+    return 0
+
+
 def _confirmar(pregunta: str, palabra: str, ya_confirmado: bool) -> bool:
     if ya_confirmado:
         return True
@@ -156,6 +261,8 @@ def cmd_parar(cfg: Config, args: argparse.Namespace) -> int:
     ):
         print("Cancelado.")
         return 1
+    if args.modo == "real":
+        revocar(cfg)
     if en_marcha:
         escribir_parada(cfg.ruta_stop, accion)
         print(
@@ -163,11 +270,8 @@ def cmd_parar(cfg: Config, args: argparse.Namespace) -> int:
             f"{cfg.bot.intervalo_s} s; compruébalo con `gaa estado`."
         )
         return 0
-    if args.modo != "paper":
-        print("El modo real llega en la fase 5.", file=sys.stderr)
-        return 1
     with abrir_almacen(cfg, args.modo) as almacen:
-        crear_bot_paper(cfg, almacen).parada_directa(accion, "comando gaa parar")
+        crear_bot(cfg, almacen, args.modo).parada_directa(accion, "comando gaa parar")
     print(f"Bot detenido ({accion}). Para volver a operar: `gaa reanudar`.")
     return 0
 
@@ -298,6 +402,9 @@ def cmd_reanudar(cfg: Config, args: argparse.Namespace) -> int:
         cuenta.equity_maximo = cuenta.equity_inicio_dia = cuenta.ultimo_equity
         almacen.guardar_cuenta(cuenta)
         almacen.registrar_evento(f"Reanudado a mano; antes estaba {anterior}", nivel="aviso")
+        if args.modo == "real":
+            revocar(cfg)
+            print("En modo real tendrás que volver a confirmar a mano al arrancar `gaa real`.")
         print("Bot reanudado: volverá a operar en la próxima vela.")
     return 0
 
@@ -355,6 +462,9 @@ def registrar_comandos(subparsers: Any) -> None:
 
     def modo(sp: argparse.ArgumentParser) -> None:
         sp.add_argument("--modo", choices=["paper", "real"], default="paper")
+
+    sp = subparsers.add_parser("real", help="bot con DINERO REAL (exige doble cerrojo)")
+    sp.set_defaults(funcion=cmd_real)
 
     sp = subparsers.add_parser("parar", help="kill switch: detiene el bot (mantiene el stop)")
     modo(sp)

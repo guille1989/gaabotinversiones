@@ -85,6 +85,15 @@ bot:
   velas_historia: 720          # velas para calcular indicadores (máximo de Kraken: 720)
   max_errores_seguidos: 10     # con más errores seguidos, el bot se detiene y avisa
 
+real:
+  # Solo se usa con modo: real (y GAA_PERMITIR_REAL=si y confirmación manual).
+  capital_maximo: 500.0        # EUR que el bot puede usar aunque la cuenta tenga más
+  tipo_orden: limite           # limite | mercado
+  limite_margen_pb: 10         # compra hasta mejor venta + 0,10 %; venta desde mejor compra - 0,10 %
+  espera_limite_s: 20          # si no se llena en este tiempo, se cancela y se reintenta
+  intentos_limite: 3
+  mercado_si_no_se_llena: true # tras los intentos, lo que falte va a mercado
+
 alertas:
   # Telegram se activa solo si .env tiene GAA_TELEGRAM_TOKEN y GAA_TELEGRAM_CHAT_ID.
   telegram: true

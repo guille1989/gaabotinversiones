@@ -65,6 +65,15 @@ class Broker(ABC):
     def limites(self) -> LimitesMercado:
         """Cantidad mínima, importe mínimo y precisión del par."""
 
+    def stops_perdidos(self) -> list[str]:
+        """Stops que desaparecieron sin ejecutarse (p. ej. cancelados a mano) desde la última
+        consulta. El bot vuelve a proteger la posición."""
+        return []
+
+    def capital_para_cuenta_nueva(self) -> float:
+        """Capital con el que empieza una cuenta nueva (en real se limita a lo asignado)."""
+        return self.saldos().cotizada
+
     @abstractmethod
     def cotizacion(self) -> Cotizacion:
         """Mejor compra y venta actuales."""
