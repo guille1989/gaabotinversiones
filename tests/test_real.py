@@ -27,7 +27,7 @@ from gaainversiones.datos import FuenteCCXT
 from gaainversiones.ejecucion.base import ErrorBroker
 from gaainversiones.ejecucion.real import RealBroker, id_exchange
 from gaainversiones.estado.almacen import AlmacenEstado
-from tests.utiles import LIMITES, MEDIANOCHE, MercadoFalso, velas_manuales
+from tests.utiles import CONFIG_BASE, LIMITES, MEDIANOCHE, MercadoFalso, velas_manuales
 
 RAIZ = Path(__file__).resolve().parents[1]
 H4 = 4 * 3_600_000
@@ -266,7 +266,7 @@ def test_capital_limitado_a_lo_asignado(almacen: AlmacenEstado) -> None:
 
 
 def _config(tmp_path: Path, **cambios: Any) -> Config:
-    contenido = yaml.safe_load((RAIZ / "config" / "config.yaml").read_text(encoding="utf-8"))
+    contenido = yaml.safe_load(CONFIG_BASE.read_text(encoding="utf-8"))
     contenido["estrategia"] = {"nombre": "senales_fijas_test", "parametros": {"compras": [15]}}
     for seccion, valores in cambios.items():
         if isinstance(valores, dict):

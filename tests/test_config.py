@@ -8,15 +8,17 @@ import pytest
 import yaml
 
 from gaainversiones.config import ErrorConfig, cargar_config
+from gaainversiones.estrategias import crear_estrategia
+from tests.utiles import CONFIG_BASE
 
 RAIZ = Path(__file__).resolve().parents[1]
-CONFIG_PROYECTO = RAIZ / "config" / "config.yaml"
+CONFIG_PROYECTO = RAIZ / "config" / "config.yaml"  # la del bot
 SECRETO = "clave-super-secreta-123"
 
 
 def _proyecto(tmp_path: Path, cambios: dict[str, object] | None = None, env: str = "") -> Path:
     """Crea un proyecto temporal con el config.yaml del repositorio modificado."""
-    contenido = yaml.safe_load(CONFIG_PROYECTO.read_text(encoding="utf-8"))
+    contenido = yaml.safe_load(CONFIG_BASE.read_text(encoding="utf-8"))
     for ruta, valor in (cambios or {}).items():
         nodo = contenido
         *padres, hoja = ruta.split(".")
@@ -31,9 +33,17 @@ def _proyecto(tmp_path: Path, cambios: dict[str, object] | None = None, env: str
     return ruta_config
 
 
-def test_config_del_proyecto_es_valida() -> None:
+def test_config_del_bot_es_valida_y_en_paper() -> None:
+    """La configuración real del bot se puede cargar y nunca se sube en modo real."""
     cfg = cargar_config(CONFIG_PROYECTO, entorno={})
     assert cfg.modo == "paper"
+    assert cfg.raiz == RAIZ
+    assert cfg.ruta_db_velas == RAIZ / "data" / "velas.sqlite"
+    crear_estrategia(cfg.estrategia.nombre, cfg.estrategia.parametros)
+
+
+def test_config_base_de_los_tests(tmp_path: Path) -> None:
+    cfg = cargar_config(_proyecto(tmp_path), entorno={})
     assert (cfg.mercado.exchange, cfg.mercado.simbolo, cfg.mercado.temporalidad) == (
         "kraken",
         "BTC/EUR",
@@ -41,8 +51,7 @@ def test_config_del_proyecto_es_valida() -> None:
     )
     assert (cfg.mercado.base, cfg.mercado.cotizada) == ("BTC", "EUR")
     assert cfg.riesgo.riesgo_por_operacion == 0.01
-    assert cfg.raiz == RAIZ
-    assert cfg.ruta_db_velas == RAIZ / "data" / "velas.sqlite"
+    assert cfg.raiz == tmp_path
 
 
 @pytest.mark.parametrize(

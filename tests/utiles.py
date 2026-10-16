@@ -15,6 +15,8 @@ from gaainversiones.estrategias.base import Estrategia, ParametrosEstrategia, Se
 from gaainversiones.riesgo.gestor import GestorRiesgo, LimitesMercado
 
 HORA_MS = 3_600_000
+# Configuración fija de los tests (la de 4h y cruce_medias_rsi), independiente de la del bot.
+CONFIG_BASE = __import__("pathlib").Path(__file__).parent / "datos" / "config_base.yaml"
 COSTES = ModeloCostes(comision_maker=0.0025, comision_taker=0.004, deslizamiento=0.0005)
 LIMITES = LimitesMercado(cantidad_minima=0.00005, importe_minimo=0.5, decimales_cantidad=8)
 MEDIANOCHE = pd.Timestamp("2024-01-01", tz="UTC")

@@ -11,6 +11,7 @@ from gaainversiones.cli import main
 from gaainversiones.config import cargar_config
 from gaainversiones.cuenta import Ejecucion, EstadoCuenta
 from gaainversiones.estado.almacen import AlmacenEstado
+from tests.utiles import CONFIG_BASE
 
 RAIZ = Path(__file__).resolve().parents[1]
 
@@ -19,7 +20,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 def proyecto(tmp_path: Path) -> Path:
     (tmp_path / "config").mkdir()
     ruta = tmp_path / "config" / "config.yaml"
-    ruta.write_text((RAIZ / "config" / "config.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+    ruta.write_text(CONFIG_BASE.read_text(encoding="utf-8"), encoding="utf-8")
     return ruta
 
 

@@ -29,7 +29,14 @@ from gaainversiones.estado.almacen import AlmacenEstado
 from gaainversiones.estado.reconciliacion import ErrorReconciliacion
 from gaainversiones.estrategias import crear_estrategia
 from gaainversiones.riesgo.gestor import GestorRiesgo, LimitesMercado
-from tests.utiles import LIMITES, MEDIANOCHE, MercadoFalso, velas_aleatorias, velas_manuales
+from tests.utiles import (
+    CONFIG_BASE,
+    LIMITES,
+    MEDIANOCHE,
+    MercadoFalso,
+    velas_aleatorias,
+    velas_manuales,
+)
 
 RAIZ = Path(__file__).resolve().parents[1]
 H4 = 4 * 3_600_000
@@ -53,7 +60,7 @@ def _config(
     riesgo: dict[str, Any] | None = None,
     **bot: Any,
 ) -> Config:
-    contenido = yaml.safe_load((RAIZ / "config" / "config.yaml").read_text(encoding="utf-8"))
+    contenido = yaml.safe_load(CONFIG_BASE.read_text(encoding="utf-8"))
     contenido["estrategia"] = {"nombre": estrategia, "parametros": parametros}
     contenido["costes"]["deslizamiento_pb"] = 0
     contenido["riesgo"].update(riesgo or {})

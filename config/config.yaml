@@ -10,7 +10,7 @@ modo: paper
 mercado:
   exchange: kraken        # exchange donde se opera (paper y real)
   simbolo: BTC/EUR
-  temporalidad: 4h        # velas de 4 horas: menos operaciones, menos comisiones
+  temporalidad: 1d        # velas diarias (cierran a las 00:00 UTC)
   # Límites de orden de Kraken para BTC/EUR, usados en el backtest.
   # En vivo se leen del exchange, que es quien manda.
   cantidad_minima: 0.00006     # BTC
@@ -31,20 +31,21 @@ datos:
   rellenar_huecos: true
 
 estrategia:
-  nombre: cruce_medias_rsi   # estrategia DIDÁCTICA de ejemplo
+  # Seguimiento de tendencia: comprado mientras el cierre está por encima de su media de
+  # 100 días (con una banda del 2 % para no entrar y salir en falso). Elegida por
+  # walk-forward en velas diarias 2017-2026 (ver README). Antes: cruce_medias_rsi (didáctica).
+  nombre: tendencia_media
   parametros:
-    media_rapida: 20
-    media_lenta: 50
-    rsi_periodo: 14
-    rsi_max_entrada: 70
+    periodo: 100
+    banda: 0.02
 
 riesgo:
-  riesgo_por_operacion: 0.01   # 1 % del capital arriesgado por operación
+  riesgo_por_operacion: 0.03   # 3 % del capital arriesgado por operación
   atr_periodo: 14
-  sl_atr: 2.0                  # stop-loss a 2 x ATR del precio de entrada
-  tp_atr: 3.0                  # take-profit a 3 x ATR
-  perdida_diaria_max: 0.03     # -3 % en el día UTC -> cierra y detiene el bot
-  caida_max: 0.15              # -15 % desde el máximo de capital -> cierra y detiene
+  sl_atr: 2.5                  # stop-loss a 2,5 x ATR del precio de entrada
+  tp_atr: 0                    # sin take-profit: sale por señal (pierde la media) o por stop
+  perdida_diaria_max: 0.05     # -5 % en el día UTC -> cierra y pausa hasta mañana
+  caida_max: 0.30              # -30 % desde el máximo de capital -> cierra y detiene
   exposicion_max: 1.0          # fracción máxima del capital invertida (spot: <= 1)
 
 costes:
@@ -67,12 +68,11 @@ backtest:
   walkforward:
     entrenamiento_meses: 36
     prueba_meses: 6
-  # Combinaciones que prueban `gaa optimizar` y `gaa walkforward` (3 x 3 x 3 = 27).
+  # Combinaciones que prueban `gaa optimizar` y `gaa walkforward` (4 x 2 = 8).
   # Cuantas más combinaciones, más fácil encontrar una buena por pura suerte.
   rejilla:
-    media_rapida: [10, 20, 30]
-    media_lenta: [50, 100, 200]
-    rsi_max_entrada: [65, 70, 75]
+    periodo: [50, 100, 150, 200]
+    banda: [0, 0.02]
   directorio_informes: informes
 
 paper:

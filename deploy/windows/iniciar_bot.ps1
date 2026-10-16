@@ -27,6 +27,8 @@ $Gaa = Join-Path $Raiz ".venv\Scripts\gaa.exe"
 $Log = Join-Path $Raiz "logs\servicio.log"
 New-Item -ItemType Directory -Force (Split-Path $Log) | Out-Null
 $env:PYTHONIOENCODING = "utf-8"
+# Para que PowerShell lea como UTF-8 la salida de gaa (si no, las tildes salen rotas).
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 function Escribir([string]$Texto) {
     $marca = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")

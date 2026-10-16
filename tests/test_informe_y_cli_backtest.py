@@ -21,7 +21,7 @@ from gaainversiones.cli import main
 from gaainversiones.config import cargar_config
 from gaainversiones.datos import CacheVelas
 from gaainversiones.estrategias import crear_estrategia
-from tests.utiles import HORA_MS, gestor, velas_aleatorias
+from tests.utiles import CONFIG_BASE, HORA_MS, gestor, velas_aleatorias
 
 RAIZ = Path(__file__).resolve().parents[1]
 INICIO_2023 = int(pd.Timestamp("2023-01-01", tz="UTC").value // 1_000_000)
@@ -38,7 +38,7 @@ def test_formatos() -> None:
 @pytest.fixture
 def proyecto(tmp_path: Path) -> Path:
     """Proyecto temporal con dos años de velas de 4h en la caché y una rejilla pequeña."""
-    contenido = yaml.safe_load((RAIZ / "config" / "config.yaml").read_text(encoding="utf-8"))
+    contenido = yaml.safe_load(CONFIG_BASE.read_text(encoding="utf-8"))
     contenido["estrategia"]["parametros"].update(media_rapida=5, media_lenta=20, rsi_periodo=5)
     contenido["backtest"].update(
         inicio_oos="2024-01-01",
@@ -115,7 +115,7 @@ def test_cli_walkforward(proyecto: Path, capsys: pytest.CaptureFixture[str]) -> 
 def test_cli_backtest_sin_datos(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "config").mkdir()
     ruta = tmp_path / "config" / "config.yaml"
-    ruta.write_text((RAIZ / "config" / "config.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+    ruta.write_text(CONFIG_BASE.read_text(encoding="utf-8"), encoding="utf-8")
     assert main(["--config", str(ruta), "backtest"]) == 1
     assert "gaa datos descargar" in capsys.readouterr().err
 

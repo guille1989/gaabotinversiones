@@ -20,7 +20,7 @@ from gaainversiones.tiempo import (
     timeframe_a_ms,
     vela_cerrada,
 )
-from tests.utiles import HORA_MS, generar_filas
+from tests.utiles import CONFIG_BASE, HORA_MS, generar_filas
 
 
 def test_timeframe_a_ms() -> None:
@@ -58,10 +58,9 @@ def test_indice_ida_y_vuelta() -> None:
 
 @pytest.fixture
 def proyecto(tmp_path: Path) -> Path:
-    raiz = Path(__file__).resolve().parents[1]
     (tmp_path / "config").mkdir()
     ruta = tmp_path / "config" / "config.yaml"
-    ruta.write_text((raiz / "config" / "config.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+    ruta.write_text(CONFIG_BASE.read_text(encoding="utf-8"), encoding="utf-8")
     (tmp_path / ".env").write_text("GAA_API_KEY=clave-que-no-debe-salir\n", encoding="utf-8")
     return ruta
 

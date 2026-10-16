@@ -1,0 +1,111 @@
+# Configuración fija para los tests (no la toques para configurar el bot: usa config/config.yaml).
+# Configuración de GaaInversiones: TODOS los parámetros viven aquí.
+# Se valida al arrancar; un valor fuera de rango detiene el programa con un mensaje claro.
+# Los secretos (claves, tokens) NO van aquí: van en .env (ver .env.example).
+# Las rutas relativas se interpretan respecto a la raíz del proyecto.
+
+# paper (por defecto) | real. "real" exige además GAA_PERMITIR_REAL=si en .env
+# y una confirmación manual al arrancar.
+modo: paper
+
+mercado:
+  exchange: kraken        # exchange donde se opera (paper y real)
+  simbolo: BTC/EUR
+  temporalidad: 4h        # velas de 4 horas: menos operaciones, menos comisiones
+  # Límites de orden de Kraken para BTC/EUR, usados en el backtest.
+  # En vivo se leen del exchange, que es quien manda.
+  cantidad_minima: 0.00006     # BTC
+  importe_minimo: 0.45         # EUR
+  decimales_cantidad: 8
+
+datos:
+  # La API de velas de Kraken solo devuelve las últimas 720 velas, así que el
+  # histórico largo sale de otra fuente. Opciones:
+  #   bitstamp -> descarga automática por API (BTC/EUR desde 2016 aprox.)
+  #   kraken   -> importa el CSV oficial con `gaa datos importar-kraken` y luego
+  #               `gaa datos descargar` lo mantiene al día con la API.
+  fuente_historica: bitstamp
+  desde: "2017-01-01"
+  directorio: data
+  # Velas ausentes (periodos sin operaciones o caídas del exchange): al leer se
+  # rellenan con velas planas de volumen 0 marcadas como sintéticas.
+  rellenar_huecos: true
+
+estrategia:
+  nombre: cruce_medias_rsi   # estrategia DIDÁCTICA de ejemplo
+  parametros:
+    media_rapida: 20
+    media_lenta: 50
+    rsi_periodo: 14
+    rsi_max_entrada: 70
+
+riesgo:
+  riesgo_por_operacion: 0.01   # 1 % del capital arriesgado por operación
+  atr_periodo: 14
+  sl_atr: 2.0                  # stop-loss a 2 x ATR del precio de entrada
+  tp_atr: 3.0                  # take-profit a 3 x ATR
+  perdida_diaria_max: 0.03     # -3 % en el día UTC -> cierra y detiene el bot
+  caida_max: 0.15              # -15 % desde el máximo de capital -> cierra y detiene
+  exposicion_max: 1.0          # fracción máxima del capital invertida (spot: <= 1)
+
+costes:
+  # Tramo base de Kraken Pro. Revísalo en https://www.kraken.com/features/fee-schedule
+  comision_maker: 0.0025
+  comision_taker: 0.0040
+  deslizamiento_pb: 5          # puntos básicos (5 pb = 0,05 %) por ejecución a mercado
+
+backtest:
+  desde: null                  # null = datos.desde
+  hasta: null                  # null = hasta la última vela cerrada
+  # Separación in-sample / out-of-sample: los parámetros se eligen mirando solo
+  # el periodo anterior a esta fecha; lo posterior es la prueba de verdad.
+  inicio_oos: "2023-01-01"
+  metrica_optimizacion: sharpe # sharpe | sortino | cagr | calmar | profit_factor
+  operaciones_minimas: 5       # una combinación con menos operaciones no es elegible
+  # La caída máxima detiene el bot (en vivo, hasta reanudarlo a mano). En el backtest
+  # se respeta igual; pon false solo para estudiar la estrategia sin esa parada.
+  detener_en_caida_max: true
+  walkforward:
+    entrenamiento_meses: 36
+    prueba_meses: 6
+  # Combinaciones que prueban `gaa optimizar` y `gaa walkforward` (3 x 3 x 3 = 27).
+  # Cuantas más combinaciones, más fácil encontrar una buena por pura suerte.
+  rejilla:
+    media_rapida: [10, 20, 30]
+    media_lenta: [50, 100, 200]
+    rsi_max_entrada: [65, 70, 75]
+  directorio_informes: informes
+
+paper:
+  capital_inicial: 1000.0      # EUR (también capital inicial del backtest)
+  profundidad_libro: 50        # niveles del libro real que consume una orden simulada
+
+bot:
+  intervalo_s: 30              # cada cuánto revisa stops y estado entre velas
+  retraso_cierre_s: 15         # espera tras el cierre de la vela antes de pedirla
+  velas_historia: 720          # velas para calcular indicadores (máximo de Kraken: 720)
+  max_errores_seguidos: 10     # con más errores seguidos, el bot se detiene y avisa
+
+real:
+  # Solo se usa con modo: real (y GAA_PERMITIR_REAL=si y confirmación manual).
+  capital_maximo: 500.0        # EUR que el bot puede usar aunque la cuenta tenga más
+  tipo_orden: limite           # limite | mercado
+  limite_margen_pb: 10         # compra hasta mejor venta + 0,10 %; venta desde mejor compra - 0,10 %
+  espera_limite_s: 20          # si no se llena en este tiempo, se cancela y se reintenta
+  intentos_limite: 3
+  mercado_si_no_se_llena: true # tras los intentos, lo que falte va a mercado
+
+alertas:
+  # Telegram se activa solo si .env tiene GAA_TELEGRAM_TOKEN y GAA_TELEGRAM_CHAT_ID.
+  telegram: true
+  nivel_minimo: info           # info | aviso | error
+  comandos_telegram: true      # /parar, /liquidar, /estado (solo desde tu chat)
+  hora_resumen_utc: 7          # resumen diario a partir de esta hora (UTC)
+  agrupar_errores_min: 10      # un mismo error se avisa como mucho cada 10 minutos
+
+registro:
+  nivel: INFO
+  directorio: logs
+  fichero: gaainversiones.log
+  max_bytes: 5000000
+  copias: 5
