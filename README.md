@@ -27,6 +27,12 @@ pip install -e ".[dev]"      # desarrollo (incluye pytest, ruff, mypy)
 cp .env.example .env         # y rellénalo
 ```
 
+En Windows, sin activar el entorno virtual, usa el lanzador de la carpeta del proyecto:
+`.\gaa estado`, `.\gaa backtest`... (equivale a `.venv\Scripts\gaa.exe`).
+
+Los comandos de Telegram (`/estado`, `/parar`...) se atienden en cada pasada del bot, así que
+la respuesta puede tardar hasta `bot.intervalo_s` (30 s).
+
 ## Configuración
 
 - **`config/config.yaml`**: todos los parámetros (mercado, datos, estrategia, riesgo,
