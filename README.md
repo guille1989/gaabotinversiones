@@ -5,8 +5,9 @@ una estrategia ganadora de partida, sino una infraestructura fiable para **proba
 estrategias y descartar las malas antes de arriesgar dinero**: datos limpios, backtest
 honesto, paper trading realista y, solo si los resultados lo justifican, operativa real.
 
-> Estado: **fase 5 de 6** (todo listo salvo el despliegue 24/7; el modo real está
-> implementado y probado contra un exchange simulado, pero **no activado**).
+> Estado: **fases 1–6 completas**. El bot funciona 24/7 en paper. El modo real está
+> implementado y probado contra un exchange simulado, pero **no activado**: antes hay que
+> superar la [lista de comprobación](#lista-de-comprobación-antes-de-operar-en-real).
 
 ## Requisitos
 
@@ -237,6 +238,67 @@ Kraken:
 Comandos: `gaa real`, `gaa estado --modo real`, `gaa parar --modo real [--liquidar]`,
 `gaa reanudar --modo real`, `gaa exportar --modo real`.
 
+## Funcionamiento 24/7 en tu PC (Windows)
+
+El bot se mantiene vivo con un **vigilante** (`deploy/windows/iniciar_bot.ps1`) lanzado por
+una **tarea programada** de Windows:
+
+- arranca al encender el PC, sin necesidad de iniciar sesión (y también al iniciarla);
+- si el bot se cae o se queda sin internet, lo vuelve a arrancar al minuto;
+- si lo paras tú (`gaa parar`, `/parar`, Ctrl+C) o no puede arrancar porque hace falta
+  una persona (está detenido o su estado no cuadra con el exchange), **no** lo reinicia;
+- otra tarea hace una copia de seguridad diaria (`gaa copia-seguridad`, se guardan 14).
+
+Instalación (una vez):
+
+1. Que el PC **no se suspenda**: *Configuración → Sistema → Inicio/apagado y batería →
+   Pantalla y suspensión → "Suspender cuando esté enchufado: Nunca"*. La pantalla sí
+   puede apagarse. O, en una consola de administrador:
+   `powercfg /change standby-timeout-ac 0` y `powercfg /change hibernate-timeout-ac 0`.
+2. Abre **PowerShell como administrador** en la carpeta del proyecto y ejecuta:
+   `powershell -ExecutionPolicy Bypass -File deploy\windows\instalar_tarea.ps1`
+3. Arráncalo sin reiniciar: `Start-ScheduledTask -TaskName GaaInversiones-paper`.
+4. Comprueba que va: `gaa estado` ("Bot en marcha: sí"), `/estado` en Telegram y
+   `logs\servicio.log`.
+
+Para quitarlo: `deploy\windows\desinstalar_tarea.ps1` (como administrador).
+
+Limitaciones de un PC doméstico: si se va la luz o internet, el bot se para (el stop
+del exchange sigue protegiendo la posición en real; en paper, al volver, recoge los
+stops que saltaron). Las actualizaciones de Windows pueden reiniciar el PC: la tarea lo
+vuelve a arrancar. Si un día no te llega el **resumen diario** por Telegram, revísalo.
+
+Para un VPS o una Raspberry Pi (Linux) hay un servicio systemd listo en
+`deploy/linux/gaainversiones-paper.service`.
+
+## Lista de comprobación antes de operar en real
+
+No pases a real hasta poder marcar todo:
+
+**La estrategia**
+- [ ] Backtest positivo **después de comisiones** y mejor que comprar y mantener
+  ajustado al riesgo (Sharpe, caída máxima), con un número razonable de operaciones.
+- [ ] Walk-forward positivo: solo cuentan los periodos que no se usaron para elegir.
+- [ ] `verificar_sin_lookahead()` pasa con la estrategia.
+- [ ] De 4 a 8 semanas en paper 24/7 con resultados coherentes con el backtest de ese
+  mismo periodo, y deslizamiento real (`precio_referencia`) revisado.
+
+**La cuenta**
+- [ ] Clave de API de Kraken **sin permiso de retirada** y limitada a tu IP si es fija.
+- [ ] Cuenta o subcuenta **exclusiva** para el bot (sin otros BTC).
+- [ ] `real.capital_maximo` pequeño: dinero que puedas perder entero.
+- [ ] Comisiones de `config.yaml` comprobadas con tu tramo real en Kraken.
+
+**La operativa**
+- [ ] Telegram funcionando y probados `/estado`, `/parar` y `/liquidar`.
+- [ ] Probado un reinicio del PC con el bot en marcha y posición abierta (en paper).
+- [ ] Copia de seguridad diaria activa y sabes restaurarla (copiar el `.sqlite` a `data/`).
+- [ ] Sabes exportar el registro fiscal: `gaa exportar --modo real --formato es`.
+
+**El primer arranque**
+- [ ] `modo: real` y `GAA_PERMITIR_REAL=si`; `gaa real` en una terminal, escribir la frase.
+- [ ] Vigilancia diaria las primeras semanas; ante la duda, `/parar`.
+
 ## Tests
 
 ```bash
@@ -279,4 +341,4 @@ tests/
    - 3b. Panel web (Streamlit, solo lectura): estado del bot, operaciones y backtests
 4. ✅ Alertas por Telegram y kill switch
 5. ✅ RealBroker (desactivado) con tests sobre un exchange simulado
-6. Despliegue 24/7 (systemd / Docker) y lista de comprobación previa a operar en real
+6. ✅ Funcionamiento 24/7 (Windows; systemd para Linux) y lista de comprobación previa a real

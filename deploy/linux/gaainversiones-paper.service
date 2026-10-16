@@ -1,0 +1,29 @@
+# Servicio systemd para cuando el bot pase a un VPS o una Raspberry Pi (Linux).
+# Instalación (como root), suponiendo el proyecto en /opt/gaainversiones y un usuario "gaa":
+#   cp deploy/linux/gaainversiones-paper.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now gaainversiones-paper
+#   journalctl -u gaainversiones-paper -f        # ver la salida
+# Para el modo real: copia el fichero como gaainversiones-real.service, cambia "paper" por
+# "real" en ExecStart y ejecuta antes una vez `gaa real` a mano para confirmar.
+
+[Unit]
+Description=GaaInversiones (bot de trading, modo paper)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gaa
+WorkingDirectory=/opt/gaainversiones
+ExecStart=/opt/gaainversiones/.venv/bin/gaa paper
+Environment=PYTHONUNBUFFERED=1
+# Reinicia si se cae o si termina por errores seguidos (código 3); no si se paró a
+# petición (0) o si no puede arrancar porque hace falta una persona (2).
+Restart=on-failure
+RestartSec=60
+RestartPreventExitStatus=2
+# systemd envía SIGTERM al parar: el bot termina el ciclo en curso y se despide.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

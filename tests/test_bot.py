@@ -283,7 +283,7 @@ def test_errores_seguidos_detienen_el_bot_sin_dejar_estado_a_medias(
     )
     entorno.en(16)
     entorno.mercado.fallos_libro = 1_000  # el libro no responde: la compra falla
-    entorno.bot.ejecutar()
+    assert entorno.bot.ejecutar() is True  # terminó por errores: el vigilante reintentará
     almacen = entorno.almacen
     assert almacen is not None
     assert almacen.ejecuciones().empty and almacen.meta("ultima_vela") is None

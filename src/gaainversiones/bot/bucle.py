@@ -522,8 +522,13 @@ class Bot:
         )
         return max(1.0, min(float(self.config.bot.intervalo_s), (siguiente_cierre - ahora) / 1000))
 
-    def ejecutar(self, *, max_ciclos: int | None = None, forzar: bool = False) -> None:
-        """Arranca y repite ciclos hasta que se pida parar o haya demasiados errores seguidos."""
+    def ejecutar(self, *, max_ciclos: int | None = None, forzar: bool = False) -> bool:
+        """Arranca y repite ciclos hasta que se pida parar o haya demasiados errores seguidos.
+
+        Returns:
+            True si terminó por errores seguidos (conviene reintentar más tarde); False si
+            terminó a petición (Ctrl+C, señal del sistema o kill switch).
+        """
         self.arrancar(forzar=forzar)
         errores = 0
         ciclos = 0
@@ -558,13 +563,16 @@ class Bot:
             motivo_fin = "interrumpido por el usuario"
         finally:
             self.almacen.guardar_meta("latido", 0)
-            nivel: Nivel = "error" if motivo_fin.endswith("seguidos") else "info"
+            por_errores = motivo_fin.endswith("seguidos")
+            if self.cuenta is not None and self.cuenta.motivo_estado.startswith("parada manual"):
+                motivo_fin = "kill switch"
             self._avisar(
                 [
                     self._evento(
                         f"Bot detenido ({motivo_fin}). "
                         "Si hay posición, su stop sigue en el exchange.",
-                        nivel,
+                        "error" if por_errores else "info",
                     )
                 ]
             )
+        return por_errores

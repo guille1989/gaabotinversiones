@@ -19,6 +19,7 @@ data/
 logs/
 informes/
 exportaciones/
+copias/
 
 # Kill switch
 STOP

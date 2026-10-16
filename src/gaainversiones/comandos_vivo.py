@@ -29,6 +29,7 @@ from gaainversiones.bot.telegram import (
     NotificadorTelegram,
 )
 from gaainversiones.config import Config
+from gaainversiones.copias import copiar_bases
 from gaainversiones.datos import FuenteCCXT
 from gaainversiones.ejecucion.costes import ModeloCostes
 from gaainversiones.ejecucion.paper import PaperBroker
@@ -42,6 +43,14 @@ from gaainversiones.riesgo.gestor import LimitesMercado
 from gaainversiones.tiempo import ahora_ms, fecha_a_ms, ms_a_fecha, timeframe_a_ms
 
 log = logging.getLogger(__name__)
+
+# Códigos de salida de `gaa paper` / `gaa real` (los usa el vigilante para decidir si reinicia):
+#   0  parada a petición (Ctrl+C, señal, kill switch): no reiniciar
+#   1  error inesperado: reiniciar
+#   2  no puede arrancar (detenido, estado que no cuadra, otro bot en marcha): no reiniciar
+#   3  demasiados errores seguidos (p. ej. sin internet): reiniciar más tarde
+SALIDA_NO_ARRANCA = 2
+SALIDA_ERRORES = 3
 
 
 def abrir_almacen(cfg: Config, modo: str) -> AlmacenEstado:
@@ -193,10 +202,11 @@ def cmd_real(cfg: Config, args: argparse.Namespace) -> int:
         if hasattr(signal, "SIGTERM"):
             signal.signal(signal.SIGTERM, parar)
         try:
-            bot.ejecutar()
+            if bot.ejecutar():
+                return SALIDA_ERRORES
         except (BotYaEnMarcha, BotDetenido, ErrorReconciliacion) as e:
             print(f"No se puede arrancar: {e}", file=sys.stderr)
-            return 2
+            return SALIDA_NO_ARRANCA
         finally:
             cuenta = almacen.cargar_cuenta()
             if cuenta is not None and cuenta.estado == "detenido":
@@ -240,10 +250,11 @@ def cmd_paper(cfg: Config, args: argparse.Namespace) -> int:
                     f"Bot en modo paper con {cfg.mercado.simbolo} {cfg.mercado.temporalidad}. "
                     "Ctrl+C para parar."
                 )
-                bot.ejecutar(forzar=args.forzar)
+                if bot.ejecutar(forzar=args.forzar):
+                    return SALIDA_ERRORES
         except (BotYaEnMarcha, BotDetenido, ErrorReconciliacion) as e:
             print(f"No se puede arrancar: {e}", file=sys.stderr)
-            return 2
+            return SALIDA_NO_ARRANCA
     return 0
 
 
@@ -273,6 +284,13 @@ def cmd_parar(cfg: Config, args: argparse.Namespace) -> int:
     with abrir_almacen(cfg, args.modo) as almacen:
         crear_bot(cfg, almacen, args.modo).parada_directa(accion, "comando gaa parar")
     print(f"Bot detenido ({accion}). Para volver a operar: `gaa reanudar`.")
+    return 0
+
+
+def cmd_copia_seguridad(cfg: Config, args: argparse.Namespace) -> int:
+    destino = Path(args.destino) if args.destino else cfg.raiz / "copias"
+    carpeta = copiar_bases(cfg.dir_datos, destino, conservar=args.conservar)
+    print(f"Copia creada en {carpeta} (se conservan las {args.conservar} más recientes)")
     return 0
 
 
@@ -473,6 +491,11 @@ def registrar_comandos(subparsers: Any) -> None:
     )
     sp.add_argument("--si", action="store_true", help="no pedir confirmación")
     sp.set_defaults(funcion=cmd_parar)
+
+    sp = subparsers.add_parser("copia-seguridad", help="copia el estado, el registro y las velas")
+    sp.add_argument("--destino", help="carpeta de copias (por defecto copias/ en el proyecto)")
+    sp.add_argument("--conservar", type=int, default=14, help="copias a conservar (14)")
+    sp.set_defaults(funcion=cmd_copia_seguridad)
 
     sp = subparsers.add_parser("telegram-prueba", help="envía un mensaje de prueba a Telegram")
     sp.set_defaults(funcion=cmd_telegram_prueba)
