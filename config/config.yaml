@@ -11,6 +11,11 @@ mercado:
   exchange: kraken        # exchange donde se opera (paper y real)
   simbolo: BTC/EUR
   temporalidad: 4h        # velas de 4 horas: menos operaciones, menos comisiones
+  # Límites de orden de Kraken para BTC/EUR, usados en el backtest.
+  # En vivo se leen del exchange, que es quien manda.
+  cantidad_minima: 0.00005     # BTC
+  importe_minimo: 0.5          # EUR
+  decimales_cantidad: 8
 
 datos:
   # La API de velas de Kraken solo devuelve las últimas 720 velas, así que el
@@ -48,8 +53,30 @@ costes:
   comision_taker: 0.0040
   deslizamiento_pb: 5          # puntos básicos (5 pb = 0,05 %) por ejecución a mercado
 
+backtest:
+  desde: null                  # null = datos.desde
+  hasta: null                  # null = hasta la última vela cerrada
+  # Separación in-sample / out-of-sample: los parámetros se eligen mirando solo
+  # el periodo anterior a esta fecha; lo posterior es la prueba de verdad.
+  inicio_oos: "2023-01-01"
+  metrica_optimizacion: sharpe # sharpe | sortino | cagr | calmar | profit_factor
+  operaciones_minimas: 5       # una combinación con menos operaciones no es elegible
+  # La caída máxima detiene el bot (en vivo, hasta reanudarlo a mano). En el backtest
+  # se respeta igual; pon false solo para estudiar la estrategia sin esa parada.
+  detener_en_caida_max: true
+  walkforward:
+    entrenamiento_meses: 36
+    prueba_meses: 6
+  # Combinaciones que prueban `gaa optimizar` y `gaa walkforward` (3 x 3 x 3 = 27).
+  # Cuantas más combinaciones, más fácil encontrar una buena por pura suerte.
+  rejilla:
+    media_rapida: [10, 20, 30]
+    media_lenta: [50, 100, 200]
+    rsi_max_entrada: [65, 70, 75]
+  directorio_informes: informes
+
 paper:
-  capital_inicial: 1000.0      # EUR
+  capital_inicial: 1000.0      # EUR (también capital inicial del backtest)
 
 registro:
   nivel: INFO

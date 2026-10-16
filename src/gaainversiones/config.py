@@ -53,6 +53,10 @@ class ConfigMercado(_Base):
     exchange: str = "kraken"
     simbolo: str = "BTC/EUR"
     temporalidad: str = "4h"
+    # Límites de orden del exchange para el backtest (en vivo se leen del propio exchange).
+    cantidad_minima: float = Field(0.00005, ge=0)
+    importe_minimo: float = Field(0.5, ge=0)
+    decimales_cantidad: int = Field(8, ge=0, le=12)
 
     @field_validator("exchange")
     @classmethod
@@ -145,6 +149,50 @@ class ConfigCostes(_Base):
     deslizamiento_pb: float = Field(5.0, ge=0, le=500)
 
 
+def _validar_fecha(v: str | None) -> str | None:
+    if v is None:
+        return v
+    try:
+        fecha_a_ms(v)
+    except ValueError as e:
+        raise ValueError(f"fecha no válida: {v!r}") from e
+    return v
+
+
+class ConfigWalkForward(_Base):
+    """Ventanas del walk-forward: se optimiza en ``entrenamiento`` y se prueba en ``prueba``."""
+
+    entrenamiento_meses: int = Field(36, ge=3, le=120)
+    prueba_meses: int = Field(6, ge=1, le=36)
+
+
+class ConfigBacktest(_Base):
+    """Periodo, separación in-sample / out-of-sample, optimización e informes."""
+
+    desde: str | None = None  # por defecto, datos.desde
+    hasta: str | None = None  # por defecto, hasta la última vela
+    inicio_oos: str = "2023-01-01"
+    metrica_optimizacion: Literal["sharpe", "sortino", "cagr", "calmar", "profit_factor"] = "sharpe"
+    operaciones_minimas: int = Field(5, ge=0)
+    detener_en_caida_max: bool = True
+    walkforward: ConfigWalkForward = Field(default_factory=ConfigWalkForward)
+    rejilla: dict[str, list[Any]] = Field(default_factory=dict)
+    directorio_informes: Path = Path("informes")
+
+    @field_validator("desde", "hasta", "inicio_oos")
+    @classmethod
+    def _fechas(cls, v: str | None) -> str | None:
+        return _validar_fecha(v)
+
+    @field_validator("rejilla")
+    @classmethod
+    def _rejilla(cls, v: dict[str, list[Any]]) -> dict[str, list[Any]]:
+        vacios = [nombre for nombre, valores in v.items() if not valores]
+        if vacios:
+            raise ValueError(f"la rejilla tiene parámetros sin valores: {', '.join(vacios)}")
+        return v
+
+
 class ConfigPaper(_Base):
     """Parámetros del modo simulado."""
 
@@ -215,6 +263,7 @@ class Config(_Base):
     estrategia: ConfigEstrategia = Field(default_factory=ConfigEstrategia)
     riesgo: ConfigRiesgo = Field(default_factory=ConfigRiesgo)
     costes: ConfigCostes = Field(default_factory=ConfigCostes)
+    backtest: ConfigBacktest = Field(default_factory=ConfigBacktest)
     paper: ConfigPaper = Field(default_factory=ConfigPaper)
     registro: ConfigRegistro = Field(default_factory=ConfigRegistro)
     secretos: Secretos = Field(default_factory=Secretos, exclude=True)
@@ -240,6 +289,10 @@ class Config(_Base):
     @property
     def dir_logs(self) -> Path:
         return self.ruta(self.registro.directorio)
+
+    @property
+    def dir_informes(self) -> Path:
+        return self.ruta(self.backtest.directorio_informes)
 
     @property
     def ruta_db_velas(self) -> Path:

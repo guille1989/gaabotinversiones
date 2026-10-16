@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import ccxt
 import numpy as np
+import pandas as pd
+
+from gaainversiones.config import ConfigRiesgo
+from gaainversiones.datos.fuentes import velas_a_dataframe
+from gaainversiones.ejecucion.costes import ModeloCostes
+from gaainversiones.estrategias.base import Estrategia, ParametrosEstrategia, Senal, registrar
+from gaainversiones.riesgo.gestor import GestorRiesgo, LimitesMercado
 
 HORA_MS = 3_600_000
+COSTES = ModeloCostes(comision_maker=0.0025, comision_taker=0.004, deslizamiento=0.0005)
+LIMITES = LimitesMercado(cantidad_minima=0.00005, importe_minimo=0.5, decimales_cantidad=8)
+MEDIANOCHE = pd.Timestamp("2024-01-01", tz="UTC")
 # Inicio alineado a la hora (14-nov-2023 22:00 UTC).
 INICIO_MS = 1_700_000_000_000 - 1_700_000_000_000 % HORA_MS
 
@@ -26,6 +36,59 @@ def generar_filas(
         [float(inicio + i * tf_ms), apertura[i], maximo[i], minimo[i], cierre[i], volumen[i]]
         for i in range(n)
     ]
+
+
+def velas_aleatorias(
+    n: int, *, tf_ms: int = HORA_MS, semilla: int = 1, inicio: int = INICIO_MS
+) -> pd.DataFrame:
+    """Velas sintéticas en el formato común."""
+    return velas_a_dataframe(generar_filas(n, inicio=inicio, tf_ms=tf_ms, semilla=semilla))
+
+
+def velas_manuales(
+    ohlc: list[tuple[float, float, float, float]],
+    *,
+    inicio: pd.Timestamp = MEDIANOCHE,
+    tf_ms: int = HORA_MS,
+) -> pd.DataFrame:
+    """Velas escritas a mano como (apertura, máximo, mínimo, cierre), volumen 1."""
+    base = int(inicio.value // 1_000_000)
+    return velas_a_dataframe(
+        [[base + i * tf_ms, o, h, lo, c, 1.0] for i, (o, h, lo, c) in enumerate(ohlc)]
+    )
+
+
+def gestor(**cambios: Any) -> GestorRiesgo:
+    """Capa de riesgo de test: ATR(2), 1 % por operación, stop 2 ATR, objetivo 3 ATR."""
+    return GestorRiesgo(ConfigRiesgo(**{"atr_periodo": 2, **cambios}), COSTES, LIMITES)
+
+
+class ParametrosFijos(ParametrosEstrategia):
+    compras: tuple[int, ...] = ()
+    ventas: tuple[int, ...] = ()
+
+
+@registrar
+class SenalesFijas(Estrategia):
+    """Estrategia de test: compra y vende en las posiciones de vela indicadas."""
+
+    nombre = "senales_fijas_test"
+    Parametros = ParametrosFijos
+
+    @property
+    def velas_necesarias(self) -> int:
+        return 1
+
+    def calcular(self, velas: pd.DataFrame) -> pd.Series:
+        p = cast(ParametrosFijos, self.parametros)
+        valores = np.full(len(velas), Senal.MANTENER, dtype=object)
+        for i in p.compras:
+            if i < len(velas):
+                valores[i] = Senal.COMPRAR
+        for i in p.ventas:
+            if i < len(velas):
+                valores[i] = Senal.VENDER
+        return self.serie_de_senales(valores, velas.index)
 
 
 class ExchangeFalso:

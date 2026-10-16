@@ -21,3 +21,6 @@ informes/
 
 # Kill switch
 STOP
+
+# Configuración local del editor / Claude
+.claude/launch.json

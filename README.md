@@ -5,7 +5,7 @@ una estrategia ganadora de partida, sino una infraestructura fiable para **proba
 estrategias y descartar las malas antes de arriesgar dinero**: datos limpios, backtest
 honesto, paper trading realista y, solo si los resultados lo justifican, operativa real.
 
-> Estado: **fase 1 de 6** (configuración, logging, datos e indicadores).
+> Estado: **fase 2 de 6** (datos, estrategia, riesgo y backtest con informe).
 
 ## Requisitos
 
@@ -82,6 +82,61 @@ gaa datos verificar                  # extensión, huecos y problemas de calidad
 - Los **huecos** (periodos sin velas) se detectan y se informan. Al cargar datos para un
   backtest se rellenan con velas planas de volumen 0 marcadas como `sintetica`.
 
+## Backtest
+
+```bash
+gaa backtest                                   # estrategia y parámetros de config.yaml
+gaa backtest --param media_rapida=10 --desde 2020-01-01
+gaa backtest --ignorar-caida-max               # estudiar la estrategia sin la parada por caída
+gaa optimizar                                  # rejilla: ranking in-sample frente a out-of-sample
+gaa walkforward                                # optimización rodante, solo cuenta lo no visto
+```
+
+Cada `gaa backtest` y `gaa walkforward` deja en `informes/` una página HTML (curva de
+capital frente a comprar y mantener, caídas, precio con las operaciones, métricas,
+eventos de riesgo y tabla de operaciones) y, en el backtest, un CSV de operaciones.
+Ábrelas con doble clic: funcionan sin conexión mientras sigan junto a `plotly.min.js`.
+
+### Reglas de la simulación (las mismas que seguirá el bot en vivo)
+
+- El backtest y el bot comparten el mismo ciclo de decisión (`nucleo.py`), la misma
+  estrategia y la misma capa de riesgo.
+- **Sin lookahead:** la señal se calcula al cierre de una vela y se ejecuta en la
+  **apertura de la siguiente**. Hay tests que lo comprueban, y
+  `verificar_sin_lookahead()` detecta estrategias que miran al futuro.
+- **Costes:** comisión taker y deslizamiento en cada ejecución a mercado.
+- **Stop-loss** dentro de la vela (vive en el exchange); si la vela abre por debajo del
+  stop se vende a la apertura. **Take-profit** al cierre de la vela, con venta en la
+  apertura siguiente. Si en una vela se tocan los dos, cuenta el stop.
+- **Pérdida diaria** ≥ límite: cierra y **pausa** hasta el día UTC siguiente.
+  **Caída máxima** desde el máximo de capital ≥ límite: cierra y **detiene** el bot; en
+  vivo no vuelve a operar hasta reanudarlo a mano.
+- Las velas sintéticas (huecos rellenados) no ejecutan órdenes.
+
+### In-sample, out-of-sample y walk-forward
+
+- `backtest.inicio_oos` separa el periodo en el que se pueden mirar los resultados para
+  elegir parámetros (IS) del que sirve de prueba (OOS). El informe muestra ambos.
+- `gaa optimizar` prueba todas las combinaciones de `backtest.rejilla`, las ordena por
+  su resultado IS y enseña cómo les fue OOS. Si el orden no se mantiene, los parámetros
+  "buenos" lo eran por casualidad.
+- `gaa walkforward` elige la mejor combinación con los `entrenamiento_meses` anteriores
+  y opera con ella los `prueba_meses` siguientes, ventana a ventana. La curva final solo
+  contiene periodos que no se usaron para elegir. La caída máxima se acumula entre
+  ventanas, como en vivo.
+
+### Añadir una estrategia
+
+1. Crea `src/gaainversiones/estrategias/mi_estrategia.py` con una subclase de
+   `Estrategia` decorada con `@registrar`, un `nombre` único, sus `Parametros`
+   (pydantic), `velas_necesarias` y `calcular(velas) -> serie de Senal`.
+2. Impórtala en `src/gaainversiones/estrategias/__init__.py`.
+3. Añade un test que llame a `verificar_sin_lookahead()` con tu estrategia.
+4. Pon `estrategia.nombre` (y su rejilla) en `config.yaml`.
+
+La estrategia solo dice comprar / vender / mantener: el tamaño, el stop, los límites
+y los costes los pone la capa de riesgo, igual para todas.
+
 ## Tests
 
 ```bash
@@ -101,6 +156,12 @@ src/gaainversiones/
   exchange.py             clientes ccxt y reintentos ante errores de red
   indicadores.py          SMA, EMA, RSI y ATR (Wilder), causales
   datos/                  fuentes (ccxt, CSV Kraken), caché SQLite, calidad, servicio
+  estrategias/            interfaz Estrategia, registro y cruce_medias_rsi (didáctica)
+  riesgo/gestor.py        tamaño, stop/objetivo por ATR, exposición y paradas
+  ejecucion/costes.py     comisiones y deslizamiento
+  cuenta.py               efectivo, posición, ejecuciones y operaciones
+  nucleo.py               ciclo de decisión común a backtest, paper y real
+  backtest/               motor, métricas, optimización, walk-forward e informes HTML
   cli.py                  comando `gaa`
 tests/
 ```
@@ -108,8 +169,9 @@ tests/
 ## Hoja de ruta
 
 1. ✅ Estructura, configuración, datos e indicadores
-2. Estrategia de ejemplo, capa de riesgo y motor de backtest con informe HTML
+2. ✅ Estrategia de ejemplo, capa de riesgo y motor de backtest con informe HTML
 3. PaperBroker, estado persistente y bucle en vivo en modo paper
+   - 3b. Panel web (Streamlit, solo lectura): estado del bot, operaciones y backtests
 4. Alertas por Telegram y kill switch
 5. RealBroker (desactivado) con tests sobre un exchange simulado
 6. Despliegue 24/7 (systemd / Docker) y lista de comprobación previa a operar en real
