@@ -1,6 +1,12 @@
 """Estrategias de trading. Importar aquí cada módulo para que quede registrado."""
 
-from gaainversiones.estrategias import cruce_medias_rsi  # noqa: F401  (registra la estrategia)
+# Importar cada módulo registra su estrategia.
+from gaainversiones.estrategias import (  # noqa: F401
+    cruce_medias_rsi,
+    reversion_rsi,
+    ruptura_donchian,
+    tendencia_media,
+)
 from gaainversiones.estrategias.base import (
     REGISTRO,
     ErrorLookahead,

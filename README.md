@@ -128,6 +128,22 @@ eventos de riesgo y tabla de operaciones) y, en el backtest, un CSV de operacion
   contiene periodos que no se usaron para elegir. La caída máxima se acumula entre
   ventanas, como en vivo.
 
+### Experimentos sin tocar config.yaml
+
+```bash
+gaa datos descargar --temporalidad 1d
+gaa walkforward --estrategia tendencia_media --temporalidad 1d --riesgo tp_atr=0 \
+    --riesgo sl_atr=2.5 --rejilla periodo=50,100,200 --rejilla banda=0,0.02 --ignorar-caida-max
+```
+
+`--estrategia`, `--temporalidad`, `--riesgo campo=valor` y `--rejilla param=v1,v2` valen para
+`backtest`, `optimizar` y `walkforward`. `tp_atr=0` quita el take-profit (la posición sale
+por señal o por stop), útil en estrategias de tendencia.
+
+Estrategias incluidas: `cruce_medias_rsi` (didáctica), `tendencia_media` (precio frente a su
+media larga), `ruptura_donchian` (nuevos máximos de N velas) y `reversion_rsi` (caídas
+cortas dentro de una tendencia alcista).
+
 ### Añadir una estrategia
 
 1. Crea `src/gaainversiones/estrategias/mi_estrategia.py` con una subclase de

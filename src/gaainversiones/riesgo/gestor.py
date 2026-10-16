@@ -5,7 +5,8 @@ o forzar el cierre de la posición.
 
 - Tamaño: tal que, si salta el stop, la pérdida (comisiones y deslizamiento incluidos)
   sea ``riesgo_por_operacion`` del capital.
-- Stop y objetivo: a ``sl_atr`` y ``tp_atr`` veces el ATR del precio de entrada.
+- Stop y objetivo: a ``sl_atr`` y ``tp_atr`` veces el ATR del precio de entrada
+  (``tp_atr = 0``: sin objetivo; la posición sale por señal o por stop).
 - Exposición: el importe invertido no supera ``exposicion_max`` del capital ni el
   efectivo disponible (spot, sin apalancamiento).
 - Paradas: pérdida en el día UTC >= ``perdida_diaria_max`` o caída desde el máximo de
@@ -119,7 +120,7 @@ class GestorRiesgo:
             aprobada=True,
             cantidad=cantidad,
             distancia_stop=distancia_stop,
-            distancia_objetivo=self.config.tp_atr * atr,
+            distancia_objetivo=self.config.tp_atr * atr if self.config.tp_atr > 0 else math.inf,
             motivo=motivo,
         )
 

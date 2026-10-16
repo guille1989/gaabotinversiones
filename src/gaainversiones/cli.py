@@ -48,7 +48,15 @@ from gaainversiones.backtest.informe import (
     tabla_texto,
 )
 from gaainversiones.comandos_vivo import registrar_comandos
-from gaainversiones.config import Config, ErrorConfig, cargar_config
+from gaainversiones.config import (
+    Config,
+    ConfigBacktest,
+    ConfigEstrategia,
+    ConfigMercado,
+    ConfigRiesgo,
+    ErrorConfig,
+    cargar_config,
+)
 from gaainversiones.datos import (
     CacheVelas,
     FuenteCCXT,
@@ -124,6 +132,31 @@ def _parametros(asignaciones: Sequence[str] | None) -> dict[str, Any]:
     return parametros
 
 
+def _experimento(cfg: Config, args: argparse.Namespace) -> Config:
+    """Aplica las opciones de experimento de la línea de comandos (validándolas)."""
+    cambios: dict[str, Any] = {}
+    if args.temporalidad:
+        cambios["mercado"] = ConfigMercado(
+            **{**cfg.mercado.model_dump(), "temporalidad": args.temporalidad}
+        )
+    if args.estrategia and args.estrategia != cfg.estrategia.nombre:
+        cambios["estrategia"] = ConfigEstrategia(nombre=args.estrategia, parametros={})
+    if args.riesgo:
+        cambios["riesgo"] = ConfigRiesgo(**{**cfg.riesgo.model_dump(), **_parametros(args.riesgo)})
+    backtest: dict[str, Any] = {}
+    if args.rejilla:
+        rejilla = {}
+        for asignacion in args.rejilla:
+            nombre, _, valores = asignacion.partition("=")
+            rejilla[nombre.strip()] = [yaml.safe_load(v) for v in valores.split(",") if v.strip()]
+        backtest["rejilla"] = rejilla
+    if args.ignorar_caida_max:
+        backtest["detener_en_caida_max"] = False
+    if backtest:
+        cambios["backtest"] = ConfigBacktest(**{**cfg.backtest.model_dump(), **backtest})
+    return cfg.model_copy(update=cambios) if cambios else cfg
+
+
 def _laboratorio(cfg: Config) -> Laboratorio:
     velas = cargar_velas(
         CacheVelas(cfg.ruta_db_velas),
@@ -147,9 +180,8 @@ def _ruta_informe(cfg: Config, tipo: str, nombre: str) -> Path:
 
 
 def _cmd_backtest(cfg: Config, args: argparse.Namespace) -> int:
+    cfg = _experimento(cfg, args)
     lab = _laboratorio(cfg)
-    if args.ignorar_caida_max:
-        lab.detener_en_caida_max = False
     desde, hasta = _periodo(cfg, args)
     resultado = lab.backtest(_parametros(args.param), desde=desde, hasta=hasta)
     inicio_oos = _fecha(cfg.backtest.inicio_oos)
@@ -168,6 +200,7 @@ def _cmd_backtest(cfg: Config, args: argparse.Namespace) -> int:
 
 
 def _cmd_optimizar(cfg: Config, args: argparse.Namespace) -> int:
+    cfg = _experimento(cfg, args)
     lab = _laboratorio(cfg)
     desde, hasta = _periodo(cfg, args)
     inicio_oos = _fecha(cfg.backtest.inicio_oos)
@@ -201,6 +234,7 @@ def _cmd_optimizar(cfg: Config, args: argparse.Namespace) -> int:
 
 
 def _cmd_walkforward(cfg: Config, args: argparse.Namespace) -> int:
+    cfg = _experimento(cfg, args)
     lab = _laboratorio(cfg)
     desde, hasta = _periodo(cfg, args)
     duracion = pd.Timedelta(milliseconds=timeframe_a_ms(cfg.mercado.temporalidad))
@@ -282,8 +316,28 @@ def construir_parser() -> argparse.ArgumentParser:
     sp.set_defaults(funcion=_cmd_datos_verificar)
 
     def periodo(sp: argparse.ArgumentParser) -> None:
+        """Periodo y opciones de experimento (no tocan config.yaml)."""
         sp.add_argument("--desde", help="inicio, p. ej. 2019-01-01 (por defecto backtest.desde)")
         sp.add_argument("--hasta", help="fin exclusivo (por defecto la última vela)")
+        sp.add_argument("--estrategia", help="estrategia a probar (por defecto la de config)")
+        sp.add_argument("--temporalidad", help="p. ej. 1d (necesita velas descargadas)")
+        sp.add_argument(
+            "--riesgo",
+            action="append",
+            metavar="CAMPO=VALOR",
+            help="cambia un parámetro de riesgo, p. ej. tp_atr=0 (repetible)",
+        )
+        sp.add_argument(
+            "--rejilla",
+            action="append",
+            metavar="PARAM=V1,V2",
+            help="sustituye la rejilla de config, p. ej. periodo=50,100,200 (repetible)",
+        )
+        sp.add_argument(
+            "--ignorar-caida-max",
+            action="store_true",
+            help="no detener por caída máxima (solo para estudiar la estrategia)",
+        )
 
     sp = subparsers.add_parser("backtest", help="backtest de la estrategia configurada")
     periodo(sp)
@@ -292,11 +346,6 @@ def construir_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="NOMBRE=VALOR",
         help="cambia un parámetro de la estrategia (repetible)",
-    )
-    sp.add_argument(
-        "--ignorar-caida-max",
-        action="store_true",
-        help="no detener el bot por caída máxima (solo para estudiar la estrategia)",
     )
     sp.add_argument("--sin-informe", action="store_true", help="no generar el informe HTML")
     sp.set_defaults(funcion=_cmd_backtest)

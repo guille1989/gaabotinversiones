@@ -118,3 +118,25 @@ def test_cli_backtest_sin_datos(tmp_path: Path, capsys: pytest.CaptureFixture[st
     ruta.write_text((RAIZ / "config" / "config.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     assert main(["--config", str(ruta), "backtest"]) == 1
     assert "gaa datos descargar" in capsys.readouterr().err
+
+
+def test_cli_opciones_de_experimento(proyecto: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    base = ["--config", str(proyecto)]
+    experimento = [
+        "--estrategia",
+        "tendencia_media",
+        "--riesgo",
+        "tp_atr=0",
+        "--riesgo",
+        "sl_atr=3",
+        "--ignorar-caida-max",
+        "--rejilla",
+        "periodo=20,40",
+    ]
+    assert main([*base, "backtest", *experimento, "--param", "periodo=20", "--sin-informe"]) == 0
+    assert "tendencia_media(periodo=20, banda=0.0)" in capsys.readouterr().out
+    assert main([*base, "walkforward", *experimento, "--sin-informe"]) == 0
+    assert "2 combinaciones por ventana" in capsys.readouterr().out
+    # La configuración del proyecto no cambia.
+    assert cargar_config(proyecto, entorno={}).estrategia.nombre == "cruce_medias_rsi"
+    assert main([*base, "backtest", "--riesgo", "riesgo_por_operacion=0.9"]) == 1

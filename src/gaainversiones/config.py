@@ -124,7 +124,7 @@ class ConfigRiesgo(_Base):
     riesgo_por_operacion: float = Field(0.01, gt=0, le=0.05)
     atr_periodo: int = Field(14, ge=2, le=200)
     sl_atr: float = Field(2.0, gt=0, le=20)
-    tp_atr: float = Field(3.0, gt=0, le=50)
+    tp_atr: float = Field(3.0, ge=0, le=50)  # 0 = sin objetivo (sale por señal o por stop)
     perdida_diaria_max: float = Field(0.03, gt=0, lt=1)
     caida_max: float = Field(0.15, gt=0, lt=1)
     exposicion_max: float = Field(1.0, gt=0, le=1.0)

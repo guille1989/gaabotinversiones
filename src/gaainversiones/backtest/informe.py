@@ -336,7 +336,8 @@ def _notas_metodo(config: Config) -> list[str]:
         f"y {formato_numero(c.deslizamiento_pb, 1)} pb de deslizamiento.",
         f"Tamaño: se arriesga el {formato_pct(r.riesgo_por_operacion)} del capital por operación "
         f"(costes incluidos), con stop a {formato_numero(r.sl_atr, 1)}×ATR({r.atr_periodo}) y "
-        f"objetivo a {formato_numero(r.tp_atr, 1)}×ATR. Exposición máxima: "
+        + (f"objetivo a {formato_numero(r.tp_atr, 1)}×ATR" if r.tp_atr > 0 else "sin objetivo")
+        + ". Exposición máxima: "
         f"{formato_pct(r.exposicion_max, 0)} del capital.",
         "El stop salta dentro de la vela (vive en el exchange); si la vela abre por debajo, "
         "se vende a la apertura. El objetivo se comprueba al cierre y se vende en la apertura "
