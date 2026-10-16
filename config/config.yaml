@@ -40,12 +40,15 @@ estrategia:
     banda: 0.02
 
 riesgo:
-  riesgo_por_operacion: 0.03   # 3 % del capital arriesgado por operación
+  # Configuración agresiva: backtest 2017-2026 con 28 % anual pero caídas de hasta -35 %.
+  # Con caida_max 0.30 o 0.35 el bot se habría detenido en 2018: no lo bajes sin repetir
+  # el backtest. Alternativa más equilibrada: 0.03 / 2.5 / 0.05 / 0.30.
+  riesgo_por_operacion: 0.05   # 5 % del capital arriesgado por operación (máximo permitido)
   atr_periodo: 14
-  sl_atr: 2.5                  # stop-loss a 2,5 x ATR del precio de entrada
+  sl_atr: 2.0                  # stop-loss a 2 x ATR del precio de entrada
   tp_atr: 0                    # sin take-profit: sale por señal (pierde la media) o por stop
-  perdida_diaria_max: 0.05     # -5 % en el día UTC -> cierra y pausa hasta mañana
-  caida_max: 0.30              # -30 % desde el máximo de capital -> cierra y detiene
+  perdida_diaria_max: 0.06     # -6 % en el día UTC -> cierra y pausa hasta mañana (> riesgo)
+  caida_max: 0.40              # -40 % desde el máximo de capital -> cierra y detiene
   exposicion_max: 1.0          # fracción máxima del capital invertida (spot: <= 1)
 
 costes:
