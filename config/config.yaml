@@ -49,9 +49,10 @@ riesgo:
   exposicion_max: 1.0          # fracción máxima del capital invertida (spot: <= 1)
 
 costes:
-  # Tramo base de Kraken Pro. Revísalo en https://www.kraken.com/features/fee-schedule
-  comision_maker: 0.0025
-  comision_taker: 0.0040
+  # Kraken Pro, nivel 1 (volumen de 30 días bajo), según la tabla oficial de octubre de 2026.
+  # Revísalo en https://www.kraken.com/features/fee-schedule si cambia tu nivel.
+  comision_maker: 0.0040
+  comision_taker: 0.0080
   deslizamiento_pb: 5          # puntos básicos (5 pb = 0,05 %) por ejecución a mercado
 
 backtest:
