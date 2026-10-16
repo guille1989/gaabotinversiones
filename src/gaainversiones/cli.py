@@ -51,6 +51,7 @@ from gaainversiones.comandos_vivo import registrar_comandos
 from gaainversiones.config import (
     Config,
     ConfigBacktest,
+    ConfigCostes,
     ConfigEstrategia,
     ConfigMercado,
     ConfigRiesgo,
@@ -143,6 +144,8 @@ def _experimento(cfg: Config, args: argparse.Namespace) -> Config:
         cambios["estrategia"] = ConfigEstrategia(nombre=args.estrategia, parametros={})
     if args.riesgo:
         cambios["riesgo"] = ConfigRiesgo(**{**cfg.riesgo.model_dump(), **_parametros(args.riesgo)})
+    if args.costes:
+        cambios["costes"] = ConfigCostes(**{**cfg.costes.model_dump(), **_parametros(args.costes)})
     backtest: dict[str, Any] = {}
     if args.rejilla:
         rejilla = {}
@@ -326,6 +329,12 @@ def construir_parser() -> argparse.ArgumentParser:
             action="append",
             metavar="CAMPO=VALOR",
             help="cambia un parámetro de riesgo, p. ej. tp_atr=0 (repetible)",
+        )
+        sp.add_argument(
+            "--costes",
+            action="append",
+            metavar="CAMPO=VALOR",
+            help="cambia un coste, p. ej. comision_taker=0.004 (repetible)",
         )
         sp.add_argument(
             "--rejilla",

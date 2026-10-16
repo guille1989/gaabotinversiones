@@ -130,6 +130,8 @@ def test_cli_opciones_de_experimento(proyecto: Path, capsys: pytest.CaptureFixtu
         "--riesgo",
         "sl_atr=3",
         "--ignorar-caida-max",
+        "--costes",
+        "comision_taker=0.004",
         "--rejilla",
         "periodo=20,40",
     ]
