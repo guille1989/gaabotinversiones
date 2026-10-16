@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import ccxt
+import pandas as pd
 
+from gaainversiones.bot.killswitch import AccionManual, FuenteOrdenes
 from gaainversiones.bot.notificador import Nivel, Notificador, NotificadorLog
 from gaainversiones.config import Config
 from gaainversiones.cuenta import Ejecucion, EstadoCuenta, Operacion, Posicion
@@ -56,6 +58,10 @@ class BotYaEnMarcha(Exception):
     """Otro proceso está usando este mismo estado."""
 
 
+class BotDetenido(Exception):
+    """El bot está detenido (caída máxima o parada manual) y necesita ``gaa reanudar``."""
+
+
 class Bot:
     """Bot de trading sobre un broker (paper o real)."""
 
@@ -67,14 +73,17 @@ class Bot:
         fuente: FuenteVelas,
         *,
         notificador: Notificador | None = None,
+        ordenes: Sequence[FuenteOrdenes] = (),
         reloj: Callable[[], int] = ahora_ms,
         dormir: Callable[[float], None] = time.sleep,
     ) -> None:
+        """``ordenes``: orígenes del kill switch (fichero STOP, Telegram...)."""
         self.config = config
         self.broker = broker
         self.almacen = almacen
         self.fuente = fuente
         self.notificador = notificador or NotificadorLog()
+        self.ordenes = list(ordenes)
         self.reloj = reloj
         self.dormir = dormir
         self.simbolo = config.mercado.simbolo
@@ -153,6 +162,11 @@ class Bot:
             capital = self.broker.saldos().cotizada
             cuenta = EstadoCuenta.nueva(capital)
             mensajes.append(self._evento(f"Cuenta nueva con {self._dinero(capital)}"))
+        if cuenta.estado == "detenido":
+            raise BotDetenido(
+                f"El bot está detenido ({cuenta.motivo_estado}). Revisa la situación y, si "
+                "quieres que vuelva a operar, ejecuta `gaa reanudar`."
+            )
         self.cuenta = cuenta
         mensajes += self._revisar_stops(None)
 
@@ -209,7 +223,9 @@ class Bot:
     # --- Ciclo --------------------------------------------------------------------------
 
     def ciclo(self) -> None:
-        """Una pasada del bucle: vela nueva (si la hay) y revisión de stops."""
+        """Una pasada del bucle: órdenes manuales, vela nueva (si la hay) y stops."""
+        if self._atender_ordenes_manuales():
+            return
         ahora = self.reloj()
         ultima = self._ultima_vela_cerrada(ahora)
         procesada = self.almacen.meta_entero("ultima_vela")
@@ -220,6 +236,119 @@ class Bot:
         mensajes += self._revisar_stops(None)
         self.almacen.guardar_meta("latido", ahora)
         self._avisar(mensajes)
+        self._resumen_diario(ahora)
+
+    # --- Kill switch y resúmenes --------------------------------------------------------
+
+    def _atender_ordenes_manuales(self) -> bool:
+        """Ejecuta las órdenes del kill switch. Devuelve True si el bot debe detenerse."""
+        for fuente in self.ordenes:
+            for orden in fuente.revisar():
+                if orden.accion == "estado":
+                    self.notificador.enviar(self.resumen())
+                    continue
+                self.aplicar_parada(orden.accion, orden.origen)
+                return True
+        return False
+
+    def aplicar_parada(self, accion: AccionManual, origen: str) -> None:
+        """Kill switch: ``parar`` conserva la posición con su stop; ``liquidar`` la vende."""
+        cuenta = self._cuenta
+        mensajes: Mensajes = []
+        try:
+            with self.almacen.transaccion():
+                if accion == "liquidar" and cuenta.posicion is not None:
+                    mensajes += self._vender(
+                        cuenta.posicion,
+                        f"kill switch ({origen})",
+                        f"{self.broker.modo}-liquidar-{self.reloj()}",
+                    )
+                cuenta.estado, cuenta.motivo_estado = "detenido", f"parada manual ({origen})"
+                self.almacen.guardar_cuenta(cuenta)
+        except Exception:
+            self.cuenta = self.almacen.cargar_cuenta()
+            raise
+        if cuenta.posicion is not None:
+            detalle = (
+                f"La posición de {cuenta.posicion.cantidad:.8f} {self.base} conserva su stop en "
+                f"{self._dinero(cuenta.posicion.stop)}."
+            )
+        else:
+            detalle = "Sin posición abierta."
+        mensajes.append(
+            self._evento(
+                f"KILL SWITCH ({accion}, {origen}): bot detenido. {detalle} "
+                "Para volver a operar: `gaa reanudar`.",
+                "aviso",
+            )
+        )
+        self._avisar(mensajes)
+        self._parar = True
+
+    def parada_directa(self, accion: AccionManual, origen: str) -> None:
+        """Kill switch con el bot apagado: actúa directamente sobre el broker y el estado."""
+        cuenta = self.almacen.cargar_cuenta()
+        if cuenta is None:
+            raise ValueError("No hay estado: el bot nunca ha arrancado en este modo")
+        self.cuenta = cuenta
+        self._avisar(self._revisar_stops(None))
+        self.aplicar_parada(accion, origen)
+
+    def resumen(self) -> str:
+        """Estado actual en pocas líneas (para /estado y el resumen diario)."""
+        cuenta = self._cuenta
+        curva = self.almacen.curva()
+        hace_un_dia = pd.Timestamp(self.reloj(), unit="ms", tz="UTC") - pd.Timedelta(days=1)
+        anteriores = curva[curva.index <= hace_un_dia]
+        variacion = (
+            f" ({formato_pct(cuenta.ultimo_equity / anteriores['equity'].iloc[-1] - 1, signo=True)}"
+            " en 24 h)"
+            if not anteriores.empty
+            else ""
+        )
+        lineas = [
+            f"Modo {self.broker.modo} · {self.simbolo} {self.temporalidad}",
+            f"Estado: {cuenta.estado}"
+            + (f" ({cuenta.motivo_estado})" if cuenta.motivo_estado else ""),
+            f"Capital: {self._dinero(cuenta.ultimo_equity)}{variacion}",
+        ]
+        posicion = cuenta.posicion
+        if posicion is None:
+            lineas.append("Posición: ninguna")
+        else:
+            texto = (
+                f"Posición: {posicion.cantidad:.8f} {self.base} a "
+                f"{self._dinero(posicion.precio_entrada)}, stop {self._dinero(posicion.stop)}"
+            )
+            if not curva.empty:
+                precio = float(curva["precio"].iloc[-1])
+                latente = posicion.cantidad * precio - posicion.coste_entrada
+                texto += f", latente {self._dinero(latente, signo=True)}"
+            lineas.append(texto)
+        operaciones = self.almacen.operaciones()
+        recientes = (
+            operaciones[operaciones["fecha_salida"] > hace_un_dia]
+            if not operaciones.empty
+            else operaciones
+        )
+        if not recientes.empty:
+            lineas.append(
+                f"Últimas 24 h: {len(recientes)} operaciones, "
+                f"{self._dinero(float(recientes['resultado'].sum()), signo=True)}"
+            )
+        return "\n".join(lineas)
+
+    def _resumen_diario(self, ahora: int) -> None:
+        """Latido diario: un resumen al día a partir de ``alertas.hora_resumen_utc``."""
+        momento = pd.Timestamp(ahora, unit="ms", tz="UTC")
+        hoy = momento.date().isoformat()
+        if (
+            momento.hour < self.config.alertas.hora_resumen_utc
+            or self.almacen.meta("resumen") == hoy
+        ):
+            return
+        self.almacen.guardar_meta("resumen", hoy)
+        self.notificador.enviar("Resumen diario\n" + self.resumen())
 
     def _revisar_stops(self, hasta_ms: int | None) -> Mensajes:
         cuenta = self._cuenta

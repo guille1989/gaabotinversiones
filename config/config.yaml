@@ -85,6 +85,14 @@ bot:
   velas_historia: 720          # velas para calcular indicadores (máximo de Kraken: 720)
   max_errores_seguidos: 10     # con más errores seguidos, el bot se detiene y avisa
 
+alertas:
+  # Telegram se activa solo si .env tiene GAA_TELEGRAM_TOKEN y GAA_TELEGRAM_CHAT_ID.
+  telegram: true
+  nivel_minimo: info           # info | aviso | error
+  comandos_telegram: true      # /parar, /liquidar, /estado (solo desde tu chat)
+  hora_resumen_utc: 7          # resumen diario a partir de esta hora (UTC)
+  agrupar_errores_min: 10      # un mismo error se avisa como mucho cada 10 minutos
+
 registro:
   nivel: INFO
   directorio: logs

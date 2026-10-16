@@ -12,7 +12,14 @@ import pytest
 import yaml
 
 from gaainversiones.backtest.motor import ejecutar_backtest
-from gaainversiones.bot import Bot, BotYaEnMarcha, VelaNoDisponible
+from gaainversiones.bot import (
+    Bot,
+    BotDetenido,
+    BotYaEnMarcha,
+    FicheroParada,
+    VelaNoDisponible,
+    escribir_parada,
+)
 from gaainversiones.bot.notificador import Nivel
 from gaainversiones.config import Config, cargar_config
 from gaainversiones.datos import FuenteCCXT
@@ -65,6 +72,7 @@ class Entorno:
         self.reloj = {"ms": T0}
         self.mercado = MercadoFalso(velas, reloj=self.reloj)
         self.ruta = tmp_path / "estado.sqlite"
+        self.ruta_stop = tmp_path / "STOP"
         self.notificador = NotificadorLista()
         self.almacen: AlmacenEstado | None = None
         self.bot = self.nuevo_bot()
@@ -91,6 +99,7 @@ class Entorno:
             self.almacen,
             fuente,
             notificador=self.notificador,
+            ordenes=[FicheroParada(self.ruta_stop)],
             reloj=ahora,
             dormir=dormir or (lambda s: None),
         )
@@ -332,3 +341,90 @@ def test_historia_insuficiente_para_la_estrategia(tmp_path: Path) -> None:
         )
         with pytest.raises(ValueError, match="velas_historia"):
             Bot(config, broker, almacen, FuenteCCXT(mercado))
+
+
+# --- Kill switch y resúmenes ----------------------------------------------------------------
+
+
+def _con_posicion(crear: Callable[..., Entorno]) -> Entorno:
+    entorno = crear(_escenario_compra(), "senales_fijas_test", {"compras": [15]})
+    entorno.en(16)
+    entorno.bot.arrancar()
+    entorno.bot.ciclo()  # compra a 100 con stop en 96
+    return entorno
+
+
+def test_kill_switch_parar_conserva_la_posicion_y_su_stop(crear: Callable[..., Entorno]) -> None:
+    entorno = _con_posicion(crear)
+    escribir_parada(entorno.ruta_stop, "parar")
+    entorno.en(17)
+    entorno.bot.ejecutar(forzar=True)  # el primer ciclo atiende la orden y el bucle termina
+    almacen = entorno.almacen
+    assert almacen is not None
+    cuenta = almacen.cargar_cuenta()
+    assert cuenta is not None and cuenta.estado == "detenido"
+    assert "parada manual (fichero STOP)" in cuenta.motivo_estado
+    assert cuenta.posicion is not None
+    assert [o.id for o in entorno.bot.broker.ordenes_stop()] == [cuenta.posicion.id_orden_stop]
+    assert almacen.meta_entero("ultima_vela") == T0 + 15 * H4  # no procesó más velas
+    assert not entorno.ruta_stop.exists()
+    assert "KILL SWITCH" in entorno.textos() and "conserva su stop" in entorno.textos()
+    with pytest.raises(BotDetenido, match="gaa reanudar"):
+        entorno.nuevo_bot().arrancar(forzar=True)
+
+
+def test_kill_switch_liquidar_vende_la_posicion(crear: Callable[..., Entorno]) -> None:
+    entorno = _con_posicion(crear)
+    escribir_parada(entorno.ruta_stop, "liquidar")
+    entorno.en(17)
+    entorno.bot.ciclo()
+    almacen = entorno.almacen
+    assert almacen is not None
+    (operacion,) = almacen.operaciones().itertuples()
+    assert operacion.motivo_salida == "kill switch (fichero STOP)"
+    assert entorno.bot.broker.ordenes_stop() == []
+    assert entorno.bot.broker.saldos().base == pytest.approx(0)
+    assert almacen.cargar_cuenta().estado == "detenido"  # type: ignore[union-attr]
+
+
+def test_parada_con_el_bot_apagado(crear: Callable[..., Entorno]) -> None:
+    entorno = _con_posicion(crear)
+    entorno.en(30)
+    bot = entorno.nuevo_bot()
+    bot.parada_directa("liquidar", "comando gaa parar")
+    assert entorno.almacen is not None
+    motivos = list(entorno.almacen.operaciones()["motivo_salida"])
+    # Antes de liquidar recoge el stop que saltó en la vela 20 mientras estaba apagado.
+    assert motivos == ["stop-loss"]
+    assert entorno.almacen.cargar_cuenta().estado == "detenido"  # type: ignore[union-attr]
+
+
+def test_estado_y_resumen_diario(crear: Callable[..., Entorno]) -> None:
+    entorno = _con_posicion(crear)
+    texto = entorno.bot.resumen()
+    assert "Estado: activo" in texto and "Posición: 2.09030100 BTC" in texto
+    assert "stop 96,00 EUR" in texto
+    # El reloj está en la vela 16 (2024-01-03 16:00 UTC): ya pasó la hora del resumen.
+    resumenes = [t for t, _ in entorno.notificador.mensajes if t.startswith("Resumen diario")]
+    assert len(resumenes) == 1
+    entorno.en(16, segundos=3600)
+    entorno.bot.ciclo()
+    assert sum(t.startswith("Resumen diario") for t, _ in entorno.notificador.mensajes) == 1
+    entorno.en(22)  # día siguiente, 16:00 UTC
+    entorno.bot.ciclo()
+    assert sum(t.startswith("Resumen diario") for t, _ in entorno.notificador.mensajes) == 2
+
+
+def test_orden_estado_desde_una_fuente(crear: Callable[..., Entorno]) -> None:
+    from gaainversiones.bot import OrdenManual
+
+    entorno = _con_posicion(crear)
+
+    class Buzon:
+        def revisar(self) -> list[OrdenManual]:
+            return [OrdenManual("estado", "Telegram")]
+
+    entorno.bot.ordenes = [Buzon()]
+    entorno.bot.ciclo()
+    assert entorno.notificador.mensajes[-1][0].startswith("Modo paper")
+    assert entorno.bot.cuenta.estado == "activo"  # type: ignore[union-attr]

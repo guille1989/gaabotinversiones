@@ -98,3 +98,30 @@ def test_reiniciar_paper(proyecto: Path) -> None:
     assert cfg.ruta_db_estado("paper").exists()
     assert main(["--config", str(proyecto), "reiniciar-paper", "--si"]) == 0
     assert not cfg.ruta_db_estado("paper").exists()
+
+
+def test_parar_con_el_bot_en_marcha_deja_la_orden(
+    proyecto: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from gaainversiones.tiempo import ahora_ms
+
+    _crear_estado(proyecto, estado="activo")
+    cfg = cargar_config(proyecto, entorno={})
+    with AlmacenEstado(
+        cfg.ruta_db_estado("paper"), modo="paper", exchange="kraken", simbolo="BTC/EUR"
+    ) as a:
+        a.guardar_meta("latido", ahora_ms())
+    assert main(["--config", str(proyecto), "parar", "--liquidar", "--si"]) == 0
+    assert cfg.ruta_stop.read_text(encoding="utf-8").strip() == "liquidar"
+    assert "Orden 'liquidar'" in capsys.readouterr().out
+
+
+def test_parar_sin_estado(proyecto: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--config", str(proyecto), "parar"]) == 0
+    assert "nada que parar" in capsys.readouterr().out
+
+
+def test_telegram_sin_configurar(proyecto: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--config", str(proyecto), "telegram-prueba"]) == 1
+    assert main(["--config", str(proyecto), "telegram-chatid"]) == 1
+    assert "GAA_TELEGRAM_TOKEN" in capsys.readouterr().err

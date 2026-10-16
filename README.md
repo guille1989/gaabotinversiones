@@ -5,7 +5,7 @@ una estrategia ganadora de partida, sino una infraestructura fiable para **proba
 estrategias y descartar las malas antes de arriesgar dinero**: datos limpios, backtest
 honesto, paper trading realista y, solo si los resultados lo justifican, operativa real.
 
-> Estado: **fase 3 de 6** (datos, backtest y bot en vivo en modo paper).
+> Estado: **fase 4 de 6** (datos, backtest, bot en paper, Telegram y kill switch).
 
 ## Requisitos
 
@@ -175,6 +175,39 @@ Cómo funciona:
 - **Errores:** los de red se reintentan; tras `bot.max_errores_seguidos` errores
   seguidos el bot se detiene y avisa. La posición conserva su stop.
 
+## Avisos por Telegram
+
+El bot avisa al móvil de cada compra y venta, de los stops ejecutados, de las paradas
+por riesgo, de los errores (agrupados, sin spam) y envía un **resumen diario** (capital,
+variación en 24 h, posición y operaciones). Si un día no llega el resumen, el bot no está
+funcionando. Si Telegram falla, el bot sigue operando y el aviso queda en el log.
+
+Configuración (una vez):
+
+1. En Telegram, abre **@BotFather** (el oficial, con marca azul), envía `/newbot` y elige
+   un nombre visible y un nombre de usuario acabado en `bot`. BotFather te da el
+   **token** (`1234567890:AAH...`).
+2. Abre el chat con tu bot, pulsa **Iniciar** y escríbele cualquier cosa.
+3. Pon el token en `.env`: `GAA_TELEGRAM_TOKEN=...`. Nunca lo compartas; si se filtra,
+   `/revoke` en BotFather genera otro.
+4. `gaa telegram-chatid` muestra tu chat id: ponlo en `.env` como `GAA_TELEGRAM_CHAT_ID=...`.
+5. `gaa telegram-prueba` envía un mensaje de prueba.
+
+Desde el móvil (solo se obedece a tu chat id; el resto se ignora y se registra):
+`/estado`, `/parar`, `/liquidar` (pide `/confirmar` en 2 minutos) y `/ayuda`.
+
+## Kill switch
+
+| Orden | Qué hace |
+|---|---|
+| `gaa parar` · `/parar` · fichero `STOP` | Detiene el bot. La posición **conserva su stop-loss** |
+| `gaa parar --liquidar` · `/liquidar` · `STOP` con `liquidar` | Cancela el stop, vende todo a mercado y detiene el bot |
+
+- Con el bot en marcha, `gaa parar` deja la orden en el fichero `STOP` de la raíz del
+  proyecto y el bot la ejecuta en menos de `bot.intervalo_s`. Con el bot apagado, actúa
+  directamente (antes recoge los stops que hayan saltado).
+- Tras una parada manual (o por caída máxima) el bot no arranca hasta `gaa reanudar`.
+
 ## Tests
 
 ```bash
@@ -201,7 +234,7 @@ src/gaainversiones/
   nucleo.py               ciclo de decisión común a backtest, paper y real
   backtest/               motor, métricas, optimización, walk-forward e informes HTML
   estado/                 almacén SQLite del bot y reconciliación con el exchange
-  bot/                    bucle en vivo y avisos
+  bot/                    bucle en vivo, avisos, Telegram y kill switch
   fiscal/                 exportación de ejecuciones a CSV
   formato.py              números al estilo español
   cli.py, comandos_vivo.py   comando `gaa`
@@ -214,6 +247,6 @@ tests/
 2. ✅ Estrategia de ejemplo, capa de riesgo y motor de backtest con informe HTML
 3. ✅ PaperBroker, estado persistente y bucle en vivo en modo paper
    - 3b. Panel web (Streamlit, solo lectura): estado del bot, operaciones y backtests
-4. Alertas por Telegram y kill switch
+4. ✅ Alertas por Telegram y kill switch
 5. RealBroker (desactivado) con tests sobre un exchange simulado
 6. Despliegue 24/7 (systemd / Docker) y lista de comprobación previa a operar en real

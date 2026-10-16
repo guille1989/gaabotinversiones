@@ -4,14 +4,23 @@ y ``exportar``."""
 from __future__ import annotations
 
 import argparse
+import logging
 import signal
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
-from typing import Any
+from typing import Any, Literal
 
-from gaainversiones.bot import Bot, BotYaEnMarcha
+from gaainversiones.bot import Bot, BotDetenido, BotYaEnMarcha
+from gaainversiones.bot.killswitch import FicheroParada, FuenteOrdenes, escribir_parada
+from gaainversiones.bot.notificador import Notificador, NotificadorLog
+from gaainversiones.bot.telegram import (
+    ClienteTelegram,
+    ComandosTelegram,
+    NotificadorCompuesto,
+    NotificadorTelegram,
+)
 from gaainversiones.config import Config
 from gaainversiones.datos import FuenteCCXT
 from gaainversiones.ejecucion.costes import ModeloCostes
@@ -24,6 +33,8 @@ from gaainversiones.formato import formato_dinero, formato_pct
 from gaainversiones.riesgo.gestor import LimitesMercado
 from gaainversiones.tiempo import ahora_ms, fecha_a_ms, ms_a_fecha, timeframe_a_ms
 
+log = logging.getLogger(__name__)
+
 
 def abrir_almacen(cfg: Config, modo: str) -> AlmacenEstado:
     return AlmacenEstado(
@@ -34,8 +45,40 @@ def abrir_almacen(cfg: Config, modo: str) -> AlmacenEstado:
     )
 
 
+def cliente_telegram(cfg: Config) -> ClienteTelegram | None:
+    """Cliente de Telegram si hay token en .env (el chat id puede faltar)."""
+    token = cfg.secretos.telegram_token
+    if token is None:
+        return None
+    return ClienteTelegram(token.get_secret_value(), cfg.secretos.telegram_chat_id)
+
+
+def avisos_y_ordenes(
+    cfg: Config, almacen: AlmacenEstado, modo: str
+) -> tuple[Notificador, list[FuenteOrdenes]]:
+    """Notificador (log + Telegram si está configurado) y orígenes del kill switch."""
+    ordenes: list[FuenteOrdenes] = [FicheroParada(cfg.ruta_stop)]
+    cliente = cliente_telegram(cfg) if cfg.alertas.telegram else None
+    if cliente is None or not cliente.chat_id:
+        if cliente is not None:
+            log.warning(
+                "Hay token de Telegram pero falta GAA_TELEGRAM_CHAT_ID: sin avisos al móvil"
+            )
+        return NotificadorLog(), ordenes
+    telegram = NotificadorTelegram(
+        cliente,
+        prefijo=f"GaaInversiones · {modo}",
+        nivel_minimo=cfg.alertas.nivel_minimo,
+        agrupar_errores_s=cfg.alertas.agrupar_errores_min * 60,
+    )
+    if cfg.alertas.comandos_telegram:
+        ordenes.append(ComandosTelegram(cliente, cliente.chat_id, almacen))
+    return NotificadorCompuesto(NotificadorLog(), telegram), ordenes
+
+
 def crear_bot_paper(cfg: Config, almacen: AlmacenEstado) -> Bot:
     """Bot en modo paper contra la API pública del exchange configurado."""
+    notificador, ordenes = avisos_y_ordenes(cfg, almacen, "paper")
     exchange = crear_exchange(cfg.mercado.exchange)
     broker = PaperBroker(
         exchange,
@@ -46,7 +89,14 @@ def crear_bot_paper(cfg: Config, almacen: AlmacenEstado) -> Bot:
         limites_por_defecto=LimitesMercado.desde_config(cfg.mercado),
         profundidad=cfg.paper.profundidad_libro,
     )
-    return Bot(cfg, broker, almacen, FuenteCCXT(exchange, silenciosa=True))
+    return Bot(
+        cfg,
+        broker,
+        almacen,
+        FuenteCCXT(exchange, silenciosa=True),
+        notificador=notificador,
+        ordenes=ordenes,
+    )
 
 
 def _confirmar(pregunta: str, palabra: str, ya_confirmado: bool) -> bool:
@@ -86,9 +136,75 @@ def cmd_paper(cfg: Config, args: argparse.Namespace) -> int:
                     "Ctrl+C para parar."
                 )
                 bot.ejecutar(forzar=args.forzar)
-        except (BotYaEnMarcha, ErrorReconciliacion) as e:
+        except (BotYaEnMarcha, BotDetenido, ErrorReconciliacion) as e:
             print(f"No se puede arrancar: {e}", file=sys.stderr)
             return 2
+    return 0
+
+
+def cmd_parar(cfg: Config, args: argparse.Namespace) -> int:
+    """Kill switch: si el bot está en marcha le deja la orden; si no, actúa directamente."""
+    accion: Literal["parar", "liquidar"] = "liquidar" if args.liquidar else "parar"
+    ruta = cfg.ruta_db_estado(args.modo)
+    if not ruta.exists():
+        print(f"No hay estado en modo {args.modo}: no hay nada que parar.")
+        return 0
+    with abrir_almacen(cfg, args.modo) as almacen:
+        en_marcha = _latido_reciente(almacen, cfg)
+    if accion == "liquidar" and not _confirmar(
+        "Se venderá TODA la posición a mercado y el bot quedará detenido.", "liquidar", args.si
+    ):
+        print("Cancelado.")
+        return 1
+    if en_marcha:
+        escribir_parada(cfg.ruta_stop, accion)
+        print(
+            f"Orden '{accion}' dejada en {cfg.ruta_stop}. El bot la ejecutará en menos de "
+            f"{cfg.bot.intervalo_s} s; compruébalo con `gaa estado`."
+        )
+        return 0
+    if args.modo != "paper":
+        print("El modo real llega en la fase 5.", file=sys.stderr)
+        return 1
+    with abrir_almacen(cfg, args.modo) as almacen:
+        crear_bot_paper(cfg, almacen).parada_directa(accion, "comando gaa parar")
+    print(f"Bot detenido ({accion}). Para volver a operar: `gaa reanudar`.")
+    return 0
+
+
+def cmd_telegram_prueba(cfg: Config, args: argparse.Namespace) -> int:
+    cliente = cliente_telegram(cfg)
+    if cliente is None or not cliente.chat_id:
+        print(
+            "Falta GAA_TELEGRAM_TOKEN y/o GAA_TELEGRAM_CHAT_ID en .env "
+            "(el chat id lo da `gaa telegram-chatid`).",
+            file=sys.stderr,
+        )
+        return 1
+    if cliente.enviar("✅ GaaInversiones: mensaje de prueba. Los avisos del bot llegarán aquí."):
+        print("Mensaje enviado: revisa Telegram.")
+        return 0
+    print("No se pudo enviar (revisa el token, el chat id y el log).", file=sys.stderr)
+    return 1
+
+
+def cmd_telegram_chatid(cfg: Config, args: argparse.Namespace) -> int:
+    cliente = cliente_telegram(cfg)
+    if cliente is None:
+        print("Falta GAA_TELEGRAM_TOKEN en .env.", file=sys.stderr)
+        return 1
+    chats: dict[str, str] = {}
+    for actualizacion in cliente.actualizaciones():
+        chat = (actualizacion.get("message") or {}).get("chat") or {}
+        if "id" in chat:
+            nombre = chat.get("username") or chat.get("first_name") or chat.get("title") or ""
+            chats[str(chat["id"])] = str(nombre)
+    if not chats:
+        print("No hay mensajes: escribe cualquier cosa a tu bot en Telegram y repite el comando.")
+        return 1
+    for chat_id, nombre in chats.items():
+        print(f"chat id: {chat_id}  ({nombre})")
+    print("Copia tu chat id en .env como GAA_TELEGRAM_CHAT_ID=...")
     return 0
 
 
@@ -239,6 +355,20 @@ def registrar_comandos(subparsers: Any) -> None:
 
     def modo(sp: argparse.ArgumentParser) -> None:
         sp.add_argument("--modo", choices=["paper", "real"], default="paper")
+
+    sp = subparsers.add_parser("parar", help="kill switch: detiene el bot (mantiene el stop)")
+    modo(sp)
+    sp.add_argument(
+        "--liquidar", action="store_true", help="además vende toda la posición a mercado"
+    )
+    sp.add_argument("--si", action="store_true", help="no pedir confirmación")
+    sp.set_defaults(funcion=cmd_parar)
+
+    sp = subparsers.add_parser("telegram-prueba", help="envía un mensaje de prueba a Telegram")
+    sp.set_defaults(funcion=cmd_telegram_prueba)
+
+    sp = subparsers.add_parser("telegram-chatid", help="muestra tu chat id de Telegram")
+    sp.set_defaults(funcion=cmd_telegram_chatid)
 
     sp = subparsers.add_parser("estado", help="estado del bot: capital, posición, eventos")
     modo(sp)

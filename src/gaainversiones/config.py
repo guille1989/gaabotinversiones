@@ -200,6 +200,16 @@ class ConfigPaper(_Base):
     profundidad_libro: int = Field(50, ge=1, le=500)
 
 
+class ConfigAlertas(_Base):
+    """Avisos por Telegram (token y chat id en .env) y órdenes desde el móvil."""
+
+    telegram: bool = True  # se usa si además hay token y chat id en .env
+    nivel_minimo: Literal["info", "aviso", "error"] = "info"
+    comandos_telegram: bool = True  # /parar, /liquidar, /estado desde tu chat
+    hora_resumen_utc: int = Field(7, ge=0, le=23)  # resumen diario a partir de esta hora
+    agrupar_errores_min: int = Field(10, ge=0, le=1440)  # un mismo error, como mucho cada N min
+
+
 class ConfigBot(_Base):
     """Bucle en vivo (paper y real)."""
 
@@ -276,6 +286,7 @@ class Config(_Base):
     backtest: ConfigBacktest = Field(default_factory=ConfigBacktest)
     paper: ConfigPaper = Field(default_factory=ConfigPaper)
     bot: ConfigBot = Field(default_factory=ConfigBot)
+    alertas: ConfigAlertas = Field(default_factory=ConfigAlertas)
     registro: ConfigRegistro = Field(default_factory=ConfigRegistro)
     secretos: Secretos = Field(default_factory=Secretos, exclude=True)
     raiz: Path = Field(default_factory=Path.cwd, exclude=True)
@@ -309,6 +320,11 @@ class Config(_Base):
     def ruta_db_velas(self) -> Path:
         """Base de datos SQLite con la caché de velas."""
         return self.dir_datos / "velas.sqlite"
+
+    @property
+    def ruta_stop(self) -> Path:
+        """Fichero del kill switch: si existe, el bot se detiene (contenido: parar | liquidar)."""
+        return self.raiz / "STOP"
 
     def ruta_db_estado(self, modo: str) -> Path:
         """Base de datos SQLite con el estado del bot en ese modo (paper o real)."""
