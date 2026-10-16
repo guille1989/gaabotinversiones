@@ -18,6 +18,7 @@ dependencies = [
     "requests>=2.32",
     "plotly>=5.22",
     "jinja2>=3.1",
+    "streamlit>=1.40",
 ]
 
 [project.optional-dependencies]
@@ -63,5 +64,5 @@ warn_redundant_casts = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["ccxt.*", "plotly.*"]
+module = ["ccxt.*", "plotly.*", "streamlit.*"]
 ignore_missing_imports = true

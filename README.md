@@ -200,6 +200,29 @@ Cómo funciona:
 - **Errores:** los de red se reintentan; tras `bot.max_errores_seguidos` errores
   seguidos el bot se detiene y avisa. La posición conserva su stop.
 
+## Panel web
+
+```bash
+.\gaa panel                      # abre http://127.0.0.1:8501 en el navegador
+.\gaa panel --modo real          # el del modo real
+```
+
+Panel de **solo lectura** (Streamlit) con cuatro pestañas:
+
+- **Bot:** si está en marcha, estado, capital, caída, posición con su stop y resultado
+  latente, curva de capital frente a comprar y mantener y últimos eventos. Se actualiza
+  solo cada 30 s.
+- **Operaciones:** operaciones cerradas con su resultado, ejecuciones filtrables por
+  fechas y descarga del CSV fiscal (formato Excel en español).
+- **Mercado:** velas en vivo del exchange con las líneas de la estrategia (media y
+  bandas de `tendencia_media`), las compras y ventas del bot, y cuánto falta para la
+  siguiente señal. Sin conexión, usa la caché local de velas.
+- **Backtests:** los informes de `informes/`, vistos dentro del panel.
+
+Abre las bases de datos en modo solo lectura: no puede modificar el estado ni molestar al
+bot, y funciona igual con el bot parado. Solo escucha en tu propio PC (127.0.0.1). Para
+actuar sobre el bot sigue usando la terminal o Telegram.
+
 ## Avisos por Telegram
 
 El bot avisa al móvil de cada compra y venta, de los stops ejecutados, de las paradas
@@ -350,6 +373,7 @@ src/gaainversiones/
   estado/                 almacén SQLite del bot y reconciliación con el exchange
   bot/                    bucle en vivo, avisos, Telegram y kill switch
   fiscal/                 exportación de ejecuciones a CSV
+  panel/                  panel web Streamlit (solo lectura)
   formato.py              números al estilo español
   cli.py, comandos_vivo.py   comando `gaa`
 tests/
@@ -360,7 +384,7 @@ tests/
 1. ✅ Estructura, configuración, datos e indicadores
 2. ✅ Estrategia de ejemplo, capa de riesgo y motor de backtest con informe HTML
 3. ✅ PaperBroker, estado persistente y bucle en vivo en modo paper
-   - 3b. Panel web (Streamlit, solo lectura): estado del bot, operaciones y backtests
+   - 3b. ✅ Panel web (Streamlit, solo lectura): estado del bot, operaciones, mercado y backtests
 4. ✅ Alertas por Telegram y kill switch
 5. ✅ RealBroker (desactivado) con tests sobre un exchange simulado
 6. ✅ Funcionamiento 24/7 (Windows; systemd para Linux) y lista de comprobación previa a real

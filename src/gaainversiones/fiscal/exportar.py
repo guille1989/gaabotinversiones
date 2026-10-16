@@ -37,7 +37,11 @@ def tabla_fiscal(
     almacen: AlmacenEstado, desde: pd.Timestamp | None = None, hasta: pd.Timestamp | None = None
 ) -> pd.DataFrame:
     """Ejecuciones con las columnas del registro fiscal, en orden cronológico."""
-    ejecuciones = almacen.ejecuciones(desde, hasta)
+    return formato_fiscal(almacen.ejecuciones(desde, hasta))
+
+
+def formato_fiscal(ejecuciones: pd.DataFrame) -> pd.DataFrame:
+    """Convierte la tabla ``ejecuciones`` del almacén a las columnas del registro fiscal."""
     if ejecuciones.empty:
         return pd.DataFrame(columns=COLUMNAS_FISCALES)
     return pd.DataFrame(

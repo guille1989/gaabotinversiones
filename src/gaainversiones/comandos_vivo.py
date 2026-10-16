@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
+import subprocess
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -294,6 +296,37 @@ def cmd_copia_seguridad(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_panel(cfg: Config, args: argparse.Namespace) -> int:
+    """Arranca el panel web de solo lectura (Streamlit) en http://127.0.0.1:<puerto>."""
+    app = Path(__file__).parent / "panel" / "app.py"
+    ruta_config = Path(args.config) if args.config else cfg.raiz / "config" / "config.yaml"
+    entorno = {
+        **os.environ,
+        "GAA_PANEL_CONFIG": str(ruta_config.resolve()),
+        "GAA_PANEL_MODO": args.modo,
+    }
+    print(f"Panel en http://127.0.0.1:{args.puerto} (Ctrl+C para cerrarlo)")
+    orden = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(app),
+        "--server.address",
+        "127.0.0.1",
+        "--server.port",
+        str(args.puerto),
+        "--server.headless",
+        "true" if args.sin_navegador else "false",
+        "--browser.gatherUsageStats",
+        "false",
+    ]
+    try:
+        return subprocess.run(orden, env=entorno, cwd=cfg.raiz, check=False).returncode
+    except KeyboardInterrupt:
+        return 0
+
+
 def cmd_telegram_prueba(cfg: Config, args: argparse.Namespace) -> int:
     cliente = cliente_telegram(cfg)
     if cliente is None or not cliente.chat_id:
@@ -491,6 +524,12 @@ def registrar_comandos(subparsers: Any) -> None:
     )
     sp.add_argument("--si", action="store_true", help="no pedir confirmación")
     sp.set_defaults(funcion=cmd_parar)
+
+    sp = subparsers.add_parser("panel", help="panel web de solo lectura en el navegador")
+    modo(sp)
+    sp.add_argument("--puerto", type=int, default=8501, help="puerto local (8501)")
+    sp.add_argument("--sin-navegador", action="store_true", help="no abrir el navegador")
+    sp.set_defaults(funcion=cmd_panel)
 
     sp = subparsers.add_parser("copia-seguridad", help="copia el estado, el registro y las velas")
     sp.add_argument("--destino", help="carpeta de copias (por defecto copias/ en el proyecto)")
