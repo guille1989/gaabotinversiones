@@ -26,6 +26,7 @@ class Posicion:
     objetivo: float
     fecha_entrada: pd.Timestamp
     comision_entrada: float
+    id_orden_stop: str = ""  # orden de stop-loss en el exchange (en vivo)
 
     @property
     def coste_entrada(self) -> float:
@@ -43,6 +44,9 @@ class Ejecucion:
     cantidad: float
     comision: float
     motivo: str
+    # En vivo: precio de referencia al decidir (para medir el deslizamiento real) e id de orden.
+    precio_referencia: float | None = None
+    id_orden: str = ""
 
     @property
     def importe(self) -> float:

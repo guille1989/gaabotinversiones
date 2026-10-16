@@ -77,7 +77,7 @@ def test_comprobar_limites() -> None:
     assert [p.tipo for p in diaria] == ["perdida_diaria"]
     ambas = riesgo.comprobar_limites(equity=840, equity_inicio_dia=900, equity_maximo=1000)
     assert [p.tipo for p in ambas] == ["caida_maxima", "perdida_diaria"]
-    assert "16.0%" in ambas[0].descripcion
+    assert "16,0 %" in ambas[0].descripcion
 
 
 def test_costes_compartidos_por_defecto() -> None:

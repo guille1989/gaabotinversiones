@@ -20,6 +20,7 @@ from typing import Literal
 
 from gaainversiones.config import ConfigMercado, ConfigRiesgo
 from gaainversiones.ejecucion.costes import ModeloCostes
+from gaainversiones.formato import formato_pct
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,8 @@ class GestorRiesgo:
             paradas.append(
                 ParadaRiesgo(
                     "caida_maxima",
-                    f"caída de {caida:.1%} desde el máximo (límite {self.config.caida_max:.0%})",
+                    f"caída de {formato_pct(caida)} desde el máximo "
+                    f"(límite {formato_pct(self.config.caida_max, 0)})",
                 )
             )
         perdida = 1 - equity / equity_inicio_dia if equity_inicio_dia > 0 else 0.0
@@ -140,8 +142,8 @@ class GestorRiesgo:
             paradas.append(
                 ParadaRiesgo(
                     "perdida_diaria",
-                    f"pérdida de {perdida:.1%} en el día "
-                    f"(límite {self.config.perdida_diaria_max:.0%})",
+                    f"pérdida de {formato_pct(perdida)} en el día "
+                    f"(límite {formato_pct(self.config.perdida_diaria_max, 0)})",
                 )
             )
         return paradas

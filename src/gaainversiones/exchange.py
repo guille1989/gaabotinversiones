@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, TypeVar
 
 import ccxt
+
+from gaainversiones.riesgo.gestor import LimitesMercado
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +34,31 @@ def crear_exchange(
     if api_key and api_secret:
         parametros.update(apiKey=api_key, secret=api_secret)
     return getattr(ccxt, nombre)(parametros)
+
+
+def limites_desde_mercado(
+    mercado: Mapping[str, Any], modo_precision: int, por_defecto: LimitesMercado
+) -> LimitesMercado:
+    """Límites de orden a partir de la ficha de mercado de ccxt.
+
+    ccxt expresa la precisión como número de decimales o como tamaño de paso
+    (``TICK_SIZE``, p. ej. ``1e-08``) según el exchange; aquí se pasa a decimales.
+    """
+    limites = mercado.get("limits") or {}
+    cantidad_min = (limites.get("amount") or {}).get("min")
+    importe_min = (limites.get("cost") or {}).get("min")
+    precision = (mercado.get("precision") or {}).get("amount")
+    if precision is None:
+        decimales = por_defecto.decimales_cantidad
+    elif modo_precision == ccxt.TICK_SIZE:
+        decimales = max(0, round(-math.log10(float(precision))))
+    else:
+        decimales = int(precision)
+    return LimitesMercado(
+        cantidad_minima=float(cantidad_min) if cantidad_min else por_defecto.cantidad_minima,
+        importe_minimo=float(importe_min) if importe_min else por_defecto.importe_minimo,
+        decimales_cantidad=decimales,
+    )
 
 
 def con_reintentos(

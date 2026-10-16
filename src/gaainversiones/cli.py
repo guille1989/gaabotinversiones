@@ -10,6 +10,10 @@ Ejemplos::
     gaa backtest --param media_rapida=10 --desde 2020-01-01
     gaa optimizar                       # rejilla: in-sample frente a out-of-sample
     gaa walkforward                     # optimización rodante con informe HTML
+    gaa paper                           # bot en vivo con dinero simulado (Ctrl+C para parar)
+    gaa estado                          # capital, posición y últimos eventos
+    gaa reanudar                        # reactiva un bot detenido por caída máxima
+    gaa exportar --formato es           # ejecuciones a CSV (registro fiscal)
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ from gaainversiones.backtest.informe import (
     tabla_optimizacion,
     tabla_texto,
 )
+from gaainversiones.comandos_vivo import registrar_comandos
 from gaainversiones.config import Config, ErrorConfig, cargar_config
 from gaainversiones.datos import (
     CacheVelas,
@@ -307,6 +312,8 @@ def construir_parser() -> argparse.ArgumentParser:
     periodo(sp)
     sp.add_argument("--sin-informe", action="store_true", help="no generar el informe HTML")
     sp.set_defaults(funcion=_cmd_walkforward)
+
+    registrar_comandos(subparsers)
     return parser
 
 

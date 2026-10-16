@@ -88,13 +88,17 @@ class FuenteCCXT:
         intentos: int = 5,
         reloj: Callable[[], int] = ahora_ms,
         dormir: Callable[[float], None] = time.sleep,
+        silenciosa: bool = False,
     ) -> None:
+        """``silenciosa``: para el bot, que pide la misma ventana cada vela y no necesita
+        avisos de que el histórico empieza más tarde de lo pedido."""
         self.exchange = exchange
         self.nombre: str = exchange.id
         self.limite = limite
         self._intentos = intentos
         self._reloj = reloj
         self._dormir = dormir
+        self._silenciosa = silenciosa
 
     def _pedir_pagina(self, simbolo: str, temporalidad: str, desde_ms: int) -> list[list[Any]]:
         pagina: list[list[Any]] = con_reintentos(
@@ -152,7 +156,11 @@ class FuenteCCXT:
                 "%s: descartadas %d velas con valores vacíos", self.nombre, int(incompletas.sum())
             )
             velas = velas[~incompletas]
-        if not velas.empty and indice_a_ms(velas.index)[0] > desde_ms + tf_ms:
+        if (
+            not self._silenciosa
+            and not velas.empty
+            and indice_a_ms(velas.index)[0] > desde_ms + tf_ms
+        ):
             pista = (
                 " (la API de Kraken solo sirve las últimas 720 velas: importa su CSV oficial)"
                 if self.nombre == "kraken"
@@ -165,7 +173,8 @@ class FuenteCCXT:
                 velas.index[0],
                 pista,
             )
-        log.info(
+        log.log(
+            logging.DEBUG if self._silenciosa else logging.INFO,
             "%s %s %s: %d velas en %d peticiones",
             self.nombre,
             simbolo,

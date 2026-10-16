@@ -24,39 +24,12 @@ from gaainversiones.backtest.motor import ResultadoBacktest
 from gaainversiones.backtest.walkforward import ResultadoOptimizacion, ResultadoWalkForward
 from gaainversiones.config import Config
 from gaainversiones.cuenta import Operacion
+from gaainversiones.formato import formato_entero, formato_eur, formato_numero, formato_pct
 
 COLOR_ESTRATEGIA = "#2563eb"
 COLOR_REFERENCIA = "#9ca3af"
 COLOR_COMPRA = "#16a34a"
 COLOR_VENTA = "#dc2626"
-
-# --- Formato de números (estilo español) ---------------------------------------------------
-
-
-def _miles(texto: str) -> str:
-    return texto.replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def formato_numero(valor: float, decimales: int = 2) -> str:
-    if valor is None or (isinstance(valor, float) and math.isnan(valor)):
-        return "—"
-    if math.isinf(valor):
-        return "∞" if valor > 0 else "-∞"
-    return _miles(f"{valor:,.{decimales}f}")
-
-
-def formato_eur(valor: float) -> str:
-    texto = formato_numero(valor, 2)
-    return texto if texto in ("—", "∞", "-∞") else f"{texto} €"
-
-
-def formato_pct(valor: float, decimales: int = 1) -> str:
-    texto = formato_numero(valor * 100 if math.isfinite(valor) else valor, decimales)
-    return texto if texto in ("—", "∞", "-∞") else f"{texto} %"
-
-
-def formato_entero(valor: float) -> str:
-    return formato_numero(valor, 0)
 
 
 FILAS_METRICAS: list[tuple[str, str, Any]] = [

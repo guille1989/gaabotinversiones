@@ -5,7 +5,7 @@ una estrategia ganadora de partida, sino una infraestructura fiable para **proba
 estrategias y descartar las malas antes de arriesgar dinero**: datos limpios, backtest
 honesto, paper trading realista y, solo si los resultados lo justifican, operativa real.
 
-> Estado: **fase 2 de 6** (datos, estrategia, riesgo y backtest con informe).
+> Estado: **fase 3 de 6** (datos, backtest y bot en vivo en modo paper).
 
 ## Requisitos
 
@@ -137,6 +137,44 @@ eventos de riesgo y tabla de operaciones) y, en el backtest, un CSV de operacion
 La estrategia solo dice comprar / vender / mantener: el tamaño, el stop, los límites
 y los costes los pone la capa de riesgo, igual para todas.
 
+## Paper trading (dinero simulado, precios reales)
+
+```bash
+gaa paper                        # arranca el bot; Ctrl+C para pararlo
+gaa paper --una-vez              # una sola pasada (útil para probar)
+gaa estado                       # capital, posición, stop, operaciones y últimos eventos
+gaa reanudar                     # reactiva un bot detenido por la caída máxima (pide confirmación)
+gaa exportar --formato es        # ejecuciones a CSV para Excel en español (registro fiscal)
+gaa reiniciar-paper              # borra el estado de paper y empieza de cero (pide confirmación)
+```
+
+Cómo funciona:
+
+- **Mismo cerebro que el backtest.** Cada vez que cierra una vela, el bot descarga las
+  últimas 720 velas de Kraken, calcula la señal y pasa por el mismo `Nucleo` y la misma
+  capa de riesgo que el backtest. Un test reproduce meses de mercado simulado y
+  comprueba que el bot en paper hace **exactamente** las mismas operaciones y la misma
+  curva de capital que el backtest.
+- **Ejecución realista.** Las órdenes a mercado se ejecutan contra el **libro de órdenes
+  real** de Kraken (precio medio de los niveles que consume), con la comisión taker.
+  Cada ejecución guarda el precio medio del mercado en ese momento, para medir el
+  deslizamiento real.
+- **Stop-loss en el "exchange".** El stop vive en un exchange simulado (SQLite) que, como
+  Kraken, bloquea el saldo. Se comprueba con velas reales de 1 minuto (o de 1 hora si el
+  bot estuvo parado más de 12 h), así que también salta mientras el bot está apagado.
+- **Estado persistente** en `data/estado_paper.sqlite`: cuenta, posición, ejecuciones,
+  operaciones, eventos y capital por vela. Cada decisión se guarda en una sola
+  transacción: un corte de luz no deja nada a medias.
+- **Al arrancar** recoge los stops que saltaron mientras estaba parado y **reconcilia**
+  su estado con el exchange. Si no cuadra, no opera y lo dice. Si la posición se quedó
+  sin stop, lo vuelve a colocar. No repite velas ya procesadas y, si estuvo parado
+  varias velas, actúa solo con la última.
+- **Un solo bot por estado:** si otro proceso dio señales de vida hace poco, no arranca.
+- **Paradas por riesgo:** pérdida diaria → pausa hasta el día siguiente (UTC); caída
+  máxima → se detiene hasta `gaa reanudar`, que mide la caída desde ese momento.
+- **Errores:** los de red se reintentan; tras `bot.max_errores_seguidos` errores
+  seguidos el bot se detiene y avisa. La posición conserva su stop.
+
 ## Tests
 
 ```bash
@@ -158,11 +196,15 @@ src/gaainversiones/
   datos/                  fuentes (ccxt, CSV Kraken), caché SQLite, calidad, servicio
   estrategias/            interfaz Estrategia, registro y cruce_medias_rsi (didáctica)
   riesgo/gestor.py        tamaño, stop/objetivo por ATR, exposición y paradas
-  ejecucion/costes.py     comisiones y deslizamiento
+  ejecucion/              costes, interfaz Broker y PaperBroker
   cuenta.py               efectivo, posición, ejecuciones y operaciones
   nucleo.py               ciclo de decisión común a backtest, paper y real
   backtest/               motor, métricas, optimización, walk-forward e informes HTML
-  cli.py                  comando `gaa`
+  estado/                 almacén SQLite del bot y reconciliación con el exchange
+  bot/                    bucle en vivo y avisos
+  fiscal/                 exportación de ejecuciones a CSV
+  formato.py              números al estilo español
+  cli.py, comandos_vivo.py   comando `gaa`
 tests/
 ```
 
@@ -170,7 +212,7 @@ tests/
 
 1. ✅ Estructura, configuración, datos e indicadores
 2. ✅ Estrategia de ejemplo, capa de riesgo y motor de backtest con informe HTML
-3. PaperBroker, estado persistente y bucle en vivo en modo paper
+3. ✅ PaperBroker, estado persistente y bucle en vivo en modo paper
    - 3b. Panel web (Streamlit, solo lectura): estado del bot, operaciones y backtests
 4. Alertas por Telegram y kill switch
 5. RealBroker (desactivado) con tests sobre un exchange simulado

@@ -18,6 +18,7 @@ dist/
 data/
 logs/
 informes/
+exportaciones/
 
 # Kill switch
 STOP

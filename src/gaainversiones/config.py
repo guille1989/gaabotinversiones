@@ -197,6 +197,16 @@ class ConfigPaper(_Base):
     """Parámetros del modo simulado."""
 
     capital_inicial: float = Field(1000.0, gt=0)
+    profundidad_libro: int = Field(50, ge=1, le=500)
+
+
+class ConfigBot(_Base):
+    """Bucle en vivo (paper y real)."""
+
+    intervalo_s: int = Field(30, ge=5, le=3600)  # revisión de stops, kill switch, latido
+    retraso_cierre_s: int = Field(15, ge=0, le=600)  # espera tras el cierre antes de pedir la vela
+    velas_historia: int = Field(720, ge=50, le=720)  # Kraken no da más de 720 velas
+    max_errores_seguidos: int = Field(10, ge=1, le=1000)
 
 
 class ConfigRegistro(_Base):
@@ -265,6 +275,7 @@ class Config(_Base):
     costes: ConfigCostes = Field(default_factory=ConfigCostes)
     backtest: ConfigBacktest = Field(default_factory=ConfigBacktest)
     paper: ConfigPaper = Field(default_factory=ConfigPaper)
+    bot: ConfigBot = Field(default_factory=ConfigBot)
     registro: ConfigRegistro = Field(default_factory=ConfigRegistro)
     secretos: Secretos = Field(default_factory=Secretos, exclude=True)
     raiz: Path = Field(default_factory=Path.cwd, exclude=True)
@@ -298,6 +309,10 @@ class Config(_Base):
     def ruta_db_velas(self) -> Path:
         """Base de datos SQLite con la caché de velas."""
         return self.dir_datos / "velas.sqlite"
+
+    def ruta_db_estado(self, modo: str) -> Path:
+        """Base de datos SQLite con el estado del bot en ese modo (paper o real)."""
+        return self.dir_datos / f"estado_{modo}.sqlite"
 
     def resumen(self) -> dict[str, Any]:
         """Configuración en forma de diccionario, sin secretos (apta para mostrar o registrar)."""

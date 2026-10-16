@@ -91,6 +91,115 @@ class SenalesFijas(Estrategia):
         return self.serie_de_senales(valores, velas.index)
 
 
+class MercadoFalso:
+    """Exchange simulado para el paper y el bot, con reloj controlable.
+
+    - Velas de la temporalidad operativa: las de ``velas`` que ya han empezado (la última
+      puede estar en curso, como en Kraken).
+    - Velas de 1 minuto y de 1 hora coherentes con ellas: el primer minuto de cada vela
+      es plano a la apertura, el segundo recorre todo el rango (apertura, máximo, mínimo,
+      cierre) y el resto queda plano al cierre. Así el stop salta igual que en el backtest.
+    - Libro de órdenes centrado en la apertura de la vela en curso (o uno fijo).
+    """
+
+    id = "falso"
+    precisionMode = ccxt.TICK_SIZE
+
+    def __init__(
+        self,
+        velas: pd.DataFrame,
+        *,
+        reloj: dict[str, int],
+        temporalidad: str = "4h",
+        diferencial: float = 0.0,
+        profundidad: float = 1e6,
+        libro: dict[str, list[list[float]]] | None = None,
+        max_minutos: int | None = None,
+    ) -> None:
+        from gaainversiones.tiempo import indice_a_ms, timeframe_a_ms
+
+        self.temporalidad = temporalidad
+        self.tf_ms = timeframe_a_ms(temporalidad)
+        self.ts = indice_a_ms(velas.index)
+        self.ohlcv = velas[["apertura", "maximo", "minimo", "cierre", "volumen"]].to_numpy()
+        self.reloj = reloj
+        self.diferencial = diferencial
+        self.profundidad = profundidad
+        self.libro = libro
+        self.max_minutos = max_minutos
+        self.ocultar_ultimas = 0  # velas cerradas aún "no publicadas"
+        self.fallos_libro = 0
+        self.mercado_roto = False
+
+    def _vela_en(self, momento: int) -> int:
+        return int(np.searchsorted(self.ts, momento, side="right")) - 1
+
+    def load_markets(self) -> dict[str, Any]:
+        if self.mercado_roto:
+            raise ccxt.ExchangeError("mercados no disponibles")
+        return {}
+
+    def market(self, symbol: str) -> dict[str, Any]:
+        return {
+            "limits": {"amount": {"min": 0.00006}, "cost": {"min": 0.45}},
+            "precision": {"amount": 1e-08},
+        }
+
+    def fetch_order_book(self, symbol: str, limit: int | None = None) -> dict[str, Any]:
+        if self.fallos_libro > 0:
+            self.fallos_libro -= 1
+            raise ccxt.NetworkError("libro no disponible")
+        if self.libro is not None:
+            return self.libro
+        precio = float(self.ohlcv[self._vela_en(self.reloj["ms"]), 0])
+        mitad = self.diferencial / 2
+        return {
+            "bids": [[precio * (1 - mitad), self.profundidad]],
+            "asks": [[precio * (1 + mitad), self.profundidad]],
+        }
+
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, since: int | None = None, limit: int | None = None
+    ) -> list[list[float]]:
+        from gaainversiones.tiempo import inicio_vela, timeframe_a_ms
+
+        ahora = self.reloj["ms"]
+        limite = limit or 720
+        desde = since if since is not None else 0
+        if timeframe == self.temporalidad:
+            visibles = self._vela_en(ahora) + 1  # la última está en curso
+            ultima_publicada = visibles - 2 - self.ocultar_ultimas
+            filas = [
+                [float(self.ts[i]), *map(float, self.ohlcv[i])]
+                for i in range(visibles)
+                if self.ts[i] >= desde and (i <= ultima_publicada or i == visibles - 1)
+            ]
+            return filas[:limite]
+        paso = timeframe_a_ms(timeframe)
+        if timeframe == "1m" and self.max_minutos is not None:
+            desde = max(desde, inicio_vela(ahora, paso) - self.max_minutos * paso)
+        filas = []
+        momento = inicio_vela(desde, paso)
+        while momento <= ahora and len(filas) < limite:
+            i = self._vela_en(momento)
+            if i >= 0:
+                o, h, lo, c, _ = map(float, self.ohlcv[i])
+                desplazamiento = (momento - int(self.ts[i])) // paso
+                if timeframe == "1m":
+                    vela = (
+                        [o] * 4
+                        if desplazamiento == 0
+                        else [o, h, lo, c]
+                        if desplazamiento == 1
+                        else [c] * 4
+                    )
+                else:  # 1h: la primera hora contiene los dos primeros minutos
+                    vela = [o, h, lo, c] if desplazamiento == 0 else [c] * 4
+                filas.append([float(momento), *vela, 1.0])
+            momento += paso
+        return filas
+
+
 class ExchangeFalso:
     """Imita ``fetch_ohlcv`` de ccxt con distintos comportamientos de exchanges reales.
 
