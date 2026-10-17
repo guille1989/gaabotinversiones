@@ -1,0 +1,27 @@
+[Unit]
+Description=Panel privado de seguimiento de GaaInversiones
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gaa
+WorkingDirectory=/opt/gaainversiones
+Environment=GAA_PANEL_CONFIG=/opt/gaainversiones/config/config.yaml
+Environment=GAA_PANEL_MODO=paper
+Environment="GAA_PANEL_UBICACION=AWS · Virginia"
+Environment=HOME=/var/cache/gaainversiones-panel
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/gaainversiones/.venv/bin/python -m streamlit run /opt/gaainversiones/src/gaainversiones/panel/app.py --server.address 127.0.0.1 --server.port 8501 --server.headless true --browser.gatherUsageStats false --theme.base light --theme.primaryColor "#2456a6" --client.toolbarMode minimal
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/gaainversiones/data
+CacheDirectory=gaainversiones-panel
+CacheDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 
 from gaainversiones.config import Config
+from gaainversiones.datos.fuentes import COLUMNAS, dataframe_vacio, velas_a_dataframe
 from gaainversiones.indicadores import sma
 from gaainversiones.tiempo import ms_a_fecha, timeframe_a_ms
 
@@ -27,7 +28,31 @@ _FECHAS = {
 
 def conexion_lectura(ruta: Path) -> sqlite3.Connection:
     """Conexión SQLite de solo lectura (cualquier escritura falla)."""
-    return sqlite3.connect(f"file:{ruta.resolve().as_posix()}?mode=ro", uri=True)
+    return sqlite3.connect(ruta.resolve().as_uri() + "?mode=ro", uri=True)
+
+
+def leer_velas_cache(config: Config, limite: int = 720) -> pd.DataFrame:
+    """Lee las últimas velas sin inicializar ni modificar el almacén del bot."""
+    if limite < 1:
+        raise ValueError("El límite de velas debe ser positivo")
+    if not config.ruta_db_velas.exists():
+        return dataframe_vacio()
+    con = conexion_lectura(config.ruta_db_velas)
+    try:
+        filas = con.execute(
+            f"SELECT ts, {', '.join(COLUMNAS)} FROM velas "
+            "WHERE exchange = ? AND simbolo = ? AND temporalidad = ? "
+            "ORDER BY ts DESC LIMIT ?",
+            (
+                config.datos.fuente_historica,
+                config.mercado.simbolo,
+                config.mercado.temporalidad,
+                limite,
+            ),
+        ).fetchall()
+    finally:
+        con.close()
+    return velas_a_dataframe(filas) if filas else dataframe_vacio()
 
 
 def leer_tabla(ruta: Path, tabla: str) -> pd.DataFrame:
@@ -98,7 +123,7 @@ def leer_estado(config: Config, modo: str, ahora_ms: int) -> EstadoBot:
     if cuenta is None:
         return EstadoBot(existe=False)
     latido = int(meta.get("latido") or 0)
-    en_marcha = bool(latido) and ahora_ms - latido < 3 * config.bot.intervalo_s * 1000
+    en_marcha = bool(latido) and 0 <= ahora_ms - latido < 3 * config.bot.intervalo_s * 1000
     ultima = meta.get("ultima_vela")
     tf = timeframe_a_ms(config.mercado.temporalidad)
     return EstadoBot(

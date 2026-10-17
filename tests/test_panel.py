@@ -69,6 +69,30 @@ def test_lectura_sin_escritura(proyecto: Config) -> None:
         panel.leer_tabla(ruta, "sqlite_master")
 
 
+def test_cache_del_panel_solo_lee_las_ultimas_velas(proyecto: Config) -> None:
+    antes = proyecto.ruta_db_velas.read_bytes()
+    velas = panel.leer_velas_cache(proyecto, limite=50)
+    assert len(velas) == 50 and velas.index.is_monotonic_increasing
+    assert proyecto.ruta_db_velas.read_bytes() == antes
+    with pytest.raises(ValueError):
+        panel.leer_velas_cache(proyecto, limite=0)
+
+
+def test_cache_ausente_no_se_crea(tmp_path: Path) -> None:
+    cfg = Config(raiz=tmp_path)
+    assert panel.leer_velas_cache(cfg).empty
+    assert not cfg.ruta_db_velas.exists()
+
+
+def test_latido_futuro_no_confirma_que_este_en_marcha(proyecto: Config) -> None:
+    ahora = int(FECHA.value // 1_000_000)
+    with AlmacenEstado(
+        proyecto.ruta_db_estado("paper"), modo="paper", exchange="kraken", simbolo="BTC/EUR"
+    ) as almacen:
+        almacen.guardar_meta("latido", ahora + 10_000)
+    assert not panel.leer_estado(proyecto, "paper", ahora).en_marcha
+
+
 def test_niveles_estrategia() -> None:
     velas = velas_aleatorias(200)
     lineas = panel.niveles_estrategia(velas, "tendencia_media", {"periodo": 50, "banda": 0.02})
@@ -113,9 +137,47 @@ def test_la_app_arranca_y_muestra_el_estado(
     app = AppTest.from_file(str(APP), default_timeout=60)
     app.run()
     assert not app.exception
-    assert app.title[0].value == "GaaInversiones"
+    assert app.title[0].value == "Tu robot, de un vistazo"
     metricas = {m.label: m.value for m in app.metric}
-    assert metricas["Capital"] == "1.004,80 EUR"
-    assert metricas["Posición"] == "0.500000 BTC"
+    assert metricas["Dinero de la cuenta"] == "1.004,80 €"
+    assert metricas["Resultado de la compra abierta"] == "+4,80 €"
     textos = " ".join(c.value for c in app.caption)
-    assert "caché local" in textos and "solo lectura" in textos
+    assert "solo lectura" in textos and "dinero simulado" in textos
+    assert "No hay conexión reciente" in " ".join(m.value for m in app.markdown)
+    assert len(app.get("plotly_chart")) == 0  # solo hay un punto de capital; Mercado no se ejecutó
+    app.radio[0].set_value("Precio y estrategia").run()
+    assert not app.exception
+    assert "caché local" in " ".join(c.value for c in app.caption)
+    assert len(app.get("plotly_chart")) == 1
+    app.radio[0].set_value("Historial").run()
+    assert not app.exception and app.download_button
+    app.radio[0].set_value("Simulaciones").run()
+    assert not app.exception
+
+
+@pytest.mark.parametrize("estado", ["activo", "pausado", "detenido"])
+def test_resumen_distingue_espera_de_parada(
+    proyecto: Config, monkeypatch: pytest.MonkeyPatch, estado: str
+) -> None:
+    monkeypatch.setenv("GAA_PANEL_CONFIG", str(proyecto.raiz / "config/config.yaml"))
+    monkeypatch.setenv("GAA_PANEL_MODO", "paper")
+    monkeypatch.setenv("GAA_PANEL_SIN_RED", "1")
+    with AlmacenEstado(
+        proyecto.ruta_db_estado("paper"), modo="paper", exchange="kraken", simbolo="BTC/EUR"
+    ) as almacen:
+        cuenta = EstadoCuenta.nueva(1000)
+        cuenta.estado = estado  # type: ignore[assignment]
+        cuenta.motivo_estado = "Límite de pérdida alcanzado" if estado != "activo" else ""
+        almacen.guardar_cuenta(cuenta)
+        almacen.guardar_meta("latido", int(pd.Timestamp.now(tz="UTC").value // 1_000_000))
+    app = AppTest.from_file(str(APP), default_timeout=60).run()
+    assert not app.exception
+    textos = " ".join(m.value for m in app.markdown)
+    assert "No hay ninguna compra abierta" in " ".join(s.value for s in app.subheader)
+    if estado == "activo":
+        assert "Tu robot está funcionando" in textos
+        assert "esperando una oportunidad" in textos
+    else:
+        assert "no puede abrir compras" in textos
+        assert "Límite de pérdida alcanzado" in textos
+        assert "esperando una oportunidad" not in textos

@@ -95,3 +95,69 @@ sudo systemctl start gaainversiones-copia.service
 Lightsail añade un encabezado propio y puede interpretar el script con `sh`.
 `instalar-proyecto.sh` instala las versiones fijadas, valida las dependencias y
 registra los servicios sin arrancarlos antes de migrar el estado.
+
+## Panel de seguimiento
+
+El servicio `gaainversiones-panel.service` está instalado y habilitado. Ejecuta
+Streamlit en `127.0.0.1:8501`, separado del paper, con el sistema de archivos en
+solo lectura salvo su caché privada. Las consultas SQLite usan `mode=ro`, también
+para las velas. Resumen, operaciones y mercado se actualizan cada 30 segundos;
+solo se ejecuta la vista seleccionada. Los informes conservan su fecha y la
+configuración original de cada simulación.
+
+La portada simplificada muestra estado, saldo, resultado de operaciones terminadas
+y compra abierta. La siguiente revisión se explica por horario (Madrid), sin
+confundir la actualización de la página con una orden de compra. Los límites y el
+registro técnico se despliegan a petición; la comparación con comprar y mantener
+está desactivada inicialmente. Las simulaciones se presentan aparte del historial
+de la cuenta. Once pruebas cubren las vistas y los estados activo, pausado,
+detenido y sin conexión reciente.
+
+El 17/10/2026 se verificaron el panel por túnel SSH, el latido del bot, ocho pruebas
+del panel y los análisis Ruff y mypy. El puerto 8501 sigue cerrado al público.
+HTTP redirige al acceso HTTPS, salvo el desafío ACME. Los puertos 80 y 443 están
+habilitados en Lightsail; la restricción previa de SSH se conserva.
+
+Destino acordado: `https://bot.theinnoapp.com`. El DNS público está delegado a
+`ns1.vercel-dns.com` y `ns2.vercel-dns.com`, aunque el registro del dominio pueda
+estar en GoDaddy. **No cambiar nameservers, `@`, `www` ni los demás registros de
+la web existente.** Crear únicamente `A bot → 54.205.214.211` en el proveedor DNS
+autoritativo, comprobando antes cualquier registro explícito `bot` y eliminando
+solo un eventual conflicto de ese mismo nombre. No añadir AAAA: esta configuración
+del panel utiliza IPv4.
+
+El registro `A bot` ya resuelve a AWS y HTTPS está activo, con certificado válido
+hasta el 15/01/2027 y renovación automática habilitada. El usuario del panel es
+`gaa`; la contraseña aleatoria se conserva en el PC,
+`.deploy-private/panel-acceso.txt`, fuera de Git. El servidor guarda su hash bcrypt
+en `/etc/nginx/gaainversiones.htpasswd`, con acceso limitado a root y Nginx.
+No abrir sesiones con esa contraseña mediante HTTP sin TLS.
+
+Para actualizar, ejecutar `sudo sh deploy/linux/instalar-panel.sh` desde una copia
+que contenga el código del panel. Cuando el DNS esté propagado:
+
+```bash
+sudo sh deploy/linux/activar-panel-https.sh
+sudo certbot renew --dry-run --run-deploy-hooks --no-random-sleep-on-renew
+```
+
+El segundo script comprueba primero el destino DNS, solicita un certificado de
+Let's Encrypt, activa Nginx con autenticación para todas las rutas del panel y
+habilita `certbot.timer`. Las renovaciones recargan Nginx mediante un deploy hook.
+El certificado se emite sin correo de contacto; la renovación depende del
+temporizador del servidor. No se añade otro recurso AWS facturable.
+
+Se verificaron TLS válido, 401 sin credenciales y con una contraseña incorrecta,
+200 con el acceso correcto y WebSocket 101 autenticado (401 sin acceso). El latido
+paper continúa avanzando. `theinnoapp.com` y `www.theinnoapp.com` siguen respondiendo
+con la página de InnoApp (HTTP 200), conservando su destino en Vercel.
+La simulación de renovación terminó correctamente y ejecutó el hook de recarga
+de Nginx. La espera aleatoria se omite solo en esta comprobación manual.
+
+Acceso de mantenimiento sin publicar Streamlit:
+
+```powershell
+ssh -i .deploy-private/gaa-lightsail-20261017 -o UserKnownHostsFile=.deploy-private/known_hosts -N -L 127.0.0.1:18501:127.0.0.1:8501 ubuntu@54.205.214.211
+```
+
+Abrir `http://127.0.0.1:18501` mientras ese túnel permanezca activo.

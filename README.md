@@ -207,21 +207,23 @@ Cómo funciona:
 .\gaa panel --modo real          # el del modo real
 ```
 
-Panel de **solo lectura** (Streamlit) con cuatro pestañas:
+Panel de **solo lectura** (Streamlit) con cuatro vistas; solo carga la seleccionada:
 
-- **Bot:** si está en marcha, estado, capital, caída, posición con su stop y resultado
-  latente, curva de capital frente a comprar y mantener y últimos eventos. Se actualiza
-  solo cada 30 s.
-- **Operaciones:** operaciones cerradas con su resultado, ejecuciones filtrables por
+- **Mi robot:** estado explicado en lenguaje sencillo, saldo, ganancias de operaciones
+  cerradas, compra abierta y evolución del dinero. La comparación con comprar Bitcoin,
+  los límites y el registro técnico son opcionales. Horarios principales en Madrid.
+- **Historial:** operaciones cerradas con su resultado, ejecuciones filtrables por
   fechas y descarga del CSV fiscal (formato Excel en español).
-- **Mercado:** velas en vivo del exchange con las líneas de la estrategia (media y
+- **Precio y estrategia:** velas del exchange con las líneas de la estrategia (media y
   bandas de `tendencia_media`), las compras y ventas del bot, y cuánto falta para la
   siguiente señal. Sin conexión, usa la caché local de velas.
-- **Backtests:** los informes de `informes/`, vistos dentro del panel.
+- **Simulaciones:** informes de `informes/`, separados de los resultados de la cuenta.
 
-Abre las bases de datos en modo solo lectura: no puede modificar el estado ni molestar al
-bot, y funciona igual con el bot parado. Solo escucha en tu propio PC (127.0.0.1). Para
-actuar sobre el bot sigue usando la terminal o Telegram.
+Mi robot, historial y precio se actualizan cada 30 s. Abre las bases de datos en
+modo solo lectura, incluida la caché de velas, y funciona igual con el bot parado.
+Solo escucha en loopback (127.0.0.1). Para actuar sobre el bot sigue usando la terminal
+o Telegram. El servicio, HTTPS y acceso privado de AWS se documentan en
+[deploy/linux/LIGHTSAIL.md](deploy/linux/LIGHTSAIL.md#panel-de-seguimiento).
 
 ## Avisos por Telegram
 
