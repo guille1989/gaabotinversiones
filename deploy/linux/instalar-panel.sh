@@ -5,7 +5,7 @@ set -eu
 origen=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 destino=/opt/gaainversiones
 
-for archivo in app.py datos.py; do
+for archivo in app.py datos.py simulacion.py; do
     install -o gaa -g gaa -m 0644 "$origen/src/gaainversiones/panel/$archivo" "$destino/src/gaainversiones/panel/$archivo"
 done
 if [ -d "$origen/informes" ]; then
