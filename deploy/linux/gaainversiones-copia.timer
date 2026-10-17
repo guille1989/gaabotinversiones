@@ -1,0 +1,10 @@
+[Unit]
+Description=Copia diaria de las bases de datos de GaaInversiones
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+Unit=gaainversiones-copia.service
+
+[Install]
+WantedBy=timers.target

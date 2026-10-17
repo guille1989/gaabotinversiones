@@ -1,0 +1,9 @@
+[Unit]
+Description=Copia coherente de las bases de datos de GaaInversiones
+
+[Service]
+Type=oneshot
+User=gaa
+WorkingDirectory=/opt/gaainversiones
+ExecStart=/opt/gaainversiones/.venv/bin/gaa copia-seguridad --conservar 14
+UMask=0077
