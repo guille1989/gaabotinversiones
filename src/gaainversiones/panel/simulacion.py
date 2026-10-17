@@ -11,13 +11,21 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from gaainversiones.backtest import Laboratorio, metricas_resultado
+from gaainversiones.backtest import (
+    Laboratorio,
+    generar_combinaciones,
+    generar_ventanas,
+    metricas_resultado,
+    walk_forward,
+)
 from gaainversiones.backtest.metricas import Metricas
 from gaainversiones.backtest.motor import ResultadoBacktest
+from gaainversiones.backtest.walkforward import ResultadoWalkForward, Ventana
 from gaainversiones.config import Config
 from gaainversiones.datos.calidad import rellenar_huecos, validar_velas
 from gaainversiones.formato import formato_pct
 from gaainversiones.panel.datos import leer_velas_cache
+from gaainversiones.tiempo import timeframe_a_ms
 
 # Periodos que ofrece el panel: etiqueta -> años hacia atrás (None = todo el histórico).
 PERIODOS: dict[str, int | None] = {
@@ -158,3 +166,134 @@ def veredicto(m: Metricas, ref: Metricas) -> tuple[str, str, str]:
             "puede deberse a la suerte."
         )
     return titular, detalle, nivel
+
+
+def prueba_por_etapas(config: Config) -> tuple[ResultadoWalkForward, list[Ventana]]:
+    """Walk-forward con la configuración: el robot elige sus ajustes y se examina en lo no visto."""
+    lab = Laboratorio.desde_config(config, velas_historicas(config))
+    desde = pd.Timestamp(config.backtest.desde or config.datos.desde, tz="UTC")
+    fin = lab.velas.index[-1] + pd.Timedelta(
+        milliseconds=timeframe_a_ms(config.mercado.temporalidad)
+    )
+    wf = config.backtest.walkforward
+    ventanas = generar_ventanas(
+        max(desde, lab.velas.index[0]), fin, wf.entrenamiento_meses, wf.prueba_meses
+    )
+    resultado = walk_forward(
+        lab,
+        generar_combinaciones(config.backtest.rejilla),
+        ventanas,
+        metrica=config.backtest.metrica_optimizacion,
+        operaciones_minimas=config.backtest.operaciones_minimas,
+    )
+    return resultado, ventanas
+
+
+@dataclass(frozen=True)
+class Comparacion:
+    """Cuenta de prueba frente a lo que habría hecho la simulación desde el mismo día."""
+
+    paper: pd.Series  # rentabilidad acumulada desde el primer registro (0,05 = +5 %)
+    simulada: pd.Series
+    dias: float
+    diferencia: float  # rentabilidad paper - rentabilidad simulada, al último registro
+
+
+def comparar_con_paper(config: Config, capital: pd.DataFrame) -> Comparacion | None:
+    """Reproduce la estrategia desde el primer día de la cuenta de prueba.
+
+    Devuelve ``None`` si todavía hay menos de dos registros de capital o si la
+    simulación no tiene velas en ese tramo.
+    """
+    if len(capital) < 2:
+        return None
+    capital = capital.sort_values("fecha")
+    paper = pd.Series(capital["equity"].to_numpy(dtype=float), index=capital["fecha"])
+    inicio, fin = paper.index[0], paper.index[-1]
+    lab = Laboratorio.desde_config(config, velas_historicas(config))
+    try:
+        resultado = lab.backtest(desde=inicio)
+    except ValueError:
+        return None
+    curva = resultado.curva["equity"]
+    simulada = curva[curva.index <= fin]
+    if simulada.empty:
+        return None
+    paper_rent = paper / paper.iloc[0] - 1
+    simulada_rent = simulada / resultado.capital_inicial - 1
+    return Comparacion(
+        paper=paper_rent,
+        simulada=simulada_rent,
+        dias=float((fin - inicio) / pd.Timedelta(days=1)),
+        diferencia=float(paper_rent.iloc[-1] - simulada_rent.iloc[-1]),
+    )
+
+
+DIAS_MINIMOS = 30
+OPERACIONES_MINIMAS = 5
+DIFERENCIA_MAXIMA = 0.05  # 5 puntos porcentuales entre la cuenta de prueba y la simulación
+
+
+@dataclass(frozen=True)
+class Requisito:
+    cumplido: bool
+    titulo: str
+    detalle: str
+
+
+def checklist_real(
+    *,
+    dias: float,
+    operaciones: int,
+    caida_paper: float,
+    caida_simulada: float,
+    errores_recientes: int,
+    en_marcha: bool,
+    diferencia: float | None,
+) -> list[Requisito]:
+    """Condiciones que conviene ver cumplidas antes de pensar en dinero real.
+
+    Es una guía de prudencia, no una recomendación de inversión. Las caídas son negativas.
+    """
+    if diferencia is None or dias < DIAS_MINIMOS:
+        parecido = Requisito(
+            False,
+            "La cuenta de prueba se parece a la simulación",
+            f"Se podrá comprobar con {DIAS_MINIMOS} días de datos.",
+        )
+    else:
+        parecido = Requisito(
+            abs(diferencia) <= DIFERENCIA_MAXIMA,
+            "La cuenta de prueba se parece a la simulación",
+            f"Diferencia de {formato_pct(diferencia, signo=True)} "
+            f"(máximo aceptable: {formato_pct(DIFERENCIA_MAXIMA, 0)}).",
+        )
+    return [
+        Requisito(
+            dias >= DIAS_MINIMOS,
+            f"Lleva al menos {DIAS_MINIMOS} días funcionando",
+            f"Lleva {int(dias)} {'día' if int(dias) == 1 else 'días'}.",
+        ),
+        Requisito(
+            operaciones >= OPERACIONES_MINIMAS,
+            f"Ha cerrado al menos {OPERACIONES_MINIMAS} operaciones",
+            f"Lleva {operaciones}. Con pocas, no se sabe si funciona o fue suerte.",
+        ),
+        parecido,
+        Requisito(
+            abs(caida_paper) <= abs(caida_simulada),
+            "Sus bajadas no superan las de la simulación",
+            f"Peor bajada en la cuenta de prueba: {formato_pct(caida_paper)}; "
+            f"en la simulación: {formato_pct(caida_simulada)}.",
+        ),
+        Requisito(
+            errores_recientes == 0,
+            "Sin errores en los últimos 7 días",
+            f"Errores registrados: {errores_recientes}.",
+        ),
+        Requisito(
+            en_marcha,
+            "El robot está conectado y activo ahora",
+            "Latido reciente y estado activo." if en_marcha else "Revisa el aviso de estado.",
+        ),
+    ]

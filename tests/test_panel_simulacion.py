@@ -4,11 +4,19 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pandas as pd
 import pytest
 
 from gaainversiones.backtest.informe import FILAS_METRICAS
 from gaainversiones.backtest.metricas import Metricas
-from gaainversiones.panel.simulacion import GLOSARIO, nombre_estrategia, veredicto
+from gaainversiones.panel.simulacion import (
+    GLOSARIO,
+    Requisito,
+    checklist_real,
+    comparar_con_paper,
+    nombre_estrategia,
+    veredicto,
+)
 
 BASE = Metricas(
     capital_inicial=1000,
@@ -75,3 +83,48 @@ def test_el_glosario_cubre_todas_las_metricas() -> None:
 def test_nombres_de_estrategia() -> None:
     assert nombre_estrategia("tendencia_media") == "Tendencia con media móvil"
     assert nombre_estrategia("otra_cosa_nueva") == "Otra cosa nueva"
+
+
+def _requisitos(**cambios: object) -> list[Requisito]:
+    base: dict[str, object] = {
+        "dias": 45.0,
+        "operaciones": 8,
+        "caida_paper": -0.2,
+        "caida_simulada": -0.35,
+        "errores_recientes": 0,
+        "en_marcha": True,
+        "diferencia": 0.02,
+    }
+    return checklist_real(**{**base, **cambios})  # type: ignore[arg-type]
+
+
+def test_checklist_completo() -> None:
+    assert all(r.cumplido for r in _requisitos())
+
+
+@pytest.mark.parametrize(
+    ("cambio", "fallan"),
+    [
+        ({"dias": 10.0}, [0, 2]),  # con pocos días tampoco se puede comparar con la simulación
+        ({"operaciones": 2}, [1]),
+        ({"diferencia": 0.2}, [2]),
+        ({"caida_paper": -0.5}, [3]),
+        ({"errores_recientes": 1}, [4]),
+        ({"en_marcha": False}, [5]),
+    ],
+)
+def test_checklist_marca_el_requisito_que_falla(
+    cambio: dict[str, object], fallan: list[int]
+) -> None:
+    requisitos = _requisitos(**cambio)
+    assert [i for i, r in enumerate(requisitos) if not r.cumplido] == fallan
+
+
+def test_checklist_sin_datos_no_compara() -> None:
+    parecido = _requisitos(diferencia=None)[2]
+    assert not parecido.cumplido and "30 días" in parecido.detalle
+
+
+def test_comparar_con_pocos_datos_devuelve_none() -> None:
+    capital = pd.DataFrame({"fecha": [pd.Timestamp("2026-01-01", tz="UTC")], "equity": [1000.0]})
+    assert comparar_con_paper(None, capital) is None  # type: ignore[arg-type]

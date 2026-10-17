@@ -19,6 +19,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from gaainversiones.backtest.informe import tabla_metricas
+from gaainversiones.backtest.walkforward import ResultadoWalkForward, Ventana
 from gaainversiones.config import Config, cargar_config
 from gaainversiones.datos.fuentes import velas_a_dataframe
 from gaainversiones.exchange import crear_exchange
@@ -34,10 +35,16 @@ from gaainversiones.panel.datos import (
     niveles_estrategia,
 )
 from gaainversiones.panel.simulacion import (
+    DIAS_MINIMOS,
+    DIFERENCIA_MAXIMA,
     GLOSARIO,
     PERIODOS,
+    Comparacion,
     Simulacion,
+    checklist_real,
+    comparar_con_paper,
     nombre_estrategia,
+    prueba_por_etapas,
     simular,
     veredicto,
 )
@@ -660,7 +667,212 @@ def _informes_detallados(cfg: Config) -> None:
             components.html(html_autonomo(elegido.ruta), height=1600, scrolling=True)
 
 
-def seccion_backtests(cfg: Config) -> None:
+@st.cache_data(ttl=3600, show_spinner="Probando el robot por etapas…")
+def _por_etapas(_cfg: Config, clave: str) -> tuple[ResultadoWalkForward, list[Ventana]]:
+    return prueba_por_etapas(_cfg)
+
+
+def _grafico_etapas(ventanas: list[Ventana]) -> go.Figure:
+    """Línea de tiempo: en cada fila, lo que el robot estudia (gris) y el examen (azul)."""
+    figura = go.Figure()
+    for tipo, color, desde, hasta in (
+        ("Estudia con datos del pasado", "#cbd5e1", "entreno_desde", "entreno_hasta"),
+        ("Se examina con datos que no ha visto", AZUL, "prueba_desde", "prueba_hasta"),
+    ):
+        figura.add_bar(
+            orientation="h",
+            name=tipo,
+            y=[f"Etapa {n}" for n in range(1, len(ventanas) + 1)],
+            base=[getattr(v, desde) for v in ventanas],
+            x=[(getattr(v, hasta) - getattr(v, desde)).total_seconds() * 1000 for v in ventanas],
+            marker={"color": color},
+            hovertemplate="%{y}<extra>" + tipo + "</extra>",
+        )
+    figura.update_layout(barmode="overlay")
+    figura.update_xaxes(type="date")
+    figura.update_yaxes(autorange="reversed", showticklabels=False)
+    return _layout(figura, 120 + 14 * len(ventanas))
+
+
+def _seccion_por_etapas(cfg: Config, clave: str, completa: Simulacion) -> None:
+    paso("05", "LA PRUEBA MÁS HONESTA: POR ETAPAS")
+    wf = cfg.backtest.walkforward
+    st.write(
+        "La simulación de arriba usa unos ajustes fijos, y es optimista: esos ajustes se "
+        "pudieron escoger sabiendo cómo acabó la historia. Para evitarlo, se repite el "
+        f"examen por etapas: el robot **estudia {wf.entrenamiento_meses} meses**, elige sus "
+        f"ajustes y se **examina en los {wf.prueba_meses} meses siguientes**, que no ha visto. "
+        "Luego se avanza y se repite hasta hoy. Solo cuentan los exámenes."
+    )
+    try:
+        resultado, ventanas = _por_etapas(cfg, clave)
+    except ValueError as e:
+        st.info(f"No se puede hacer la prueba por etapas todavía: {e}")
+        return
+    st.plotly_chart(_grafico_etapas(ventanas), width="stretch", config={"displayModeBar": False})
+    m, ref = resultado.metricas, resultado.metricas_referencia
+    columnas = st.columns(3)
+    columnas[0].metric(
+        "Dinero final por etapas",
+        formato_eur(m.capital_final),
+        f"Simulación completa: {formato_eur(completa.estrategia.capital_final)}",
+        delta_color="off",
+        delta_arrow="off",
+        help="Es la cifra más realista: el robot nunca ve el futuro de cada examen.",
+    )
+    columnas[1].metric(
+        "Peor bajada por etapas",
+        formato_pct(m.caida_maxima),
+        f"Mantener: {formato_pct(ref.caida_maxima)}",
+        delta_color="off",
+        delta_arrow="off",
+        help=GLOSARIO["Caída máxima"],
+    )
+    columnas[2].metric(
+        "Operaciones ganadoras",
+        formato_pct(m.pct_ganadoras, 0),
+        f"{m.operaciones} operaciones",
+        delta_color="off",
+        delta_arrow="off",
+        help=GLOSARIO["% ganadoras"],
+    )
+    if m.capital_final < completa.estrategia.capital_final:
+        st.info(
+            "**Por etapas sale menos que en la simulación completa.** Es lo normal: la "
+            f"diferencia ({formato_eur(completa.estrategia.capital_final - m.capital_final)}) "
+            "es lo que se gana al conocer de antemano cómo acabó la historia. "
+            "Para estimar lo que podría pasar, fíate más de esta cifra."
+        )
+    with st.expander("Ver qué ajustes eligió el robot en cada etapa"):
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Examen": [
+                        f"{v.ventana.prueba_desde:%m/%Y} a {v.ventana.prueba_hasta:%m/%Y}"
+                        for v in resultado.ventanas
+                    ],
+                    "Ajustes elegidos": [
+                        ", ".join(f"{k}={x}" for k, x in v.elegida.parametros.items())
+                        if v.elegida
+                        else "no opera"
+                        for v in resultado.ventanas
+                    ],
+                    "Resultado del examen": [
+                        v.capital_final / v.capital_inicial - 1 for v in resultado.ventanas
+                    ],
+                }
+            ),
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Resultado del examen": st.column_config.NumberColumn(format="percent"),
+            },
+        )
+
+
+def _seccion_comparacion(cfg: Config, capital: pd.DataFrame) -> Comparacion | None:
+    paso("06", "¿SE PARECE LA CUENTA DE PRUEBA A LA SIMULACIÓN?")
+    st.write(
+        "Si el robot funciona como en la simulación, la cuenta de prueba debería "
+        "moverse de forma parecida desde su primer día. Si se separan mucho, hay algo "
+        "que la simulación no está recogiendo."
+    )
+    try:
+        comparacion = comparar_con_paper(cfg, capital)
+    except ValueError as e:
+        st.info(f"No se puede comparar todavía: {e}")
+        return None
+    if comparacion is None:
+        st.info(
+            "Todavía hay pocos datos: la comparación aparecerá cuando la cuenta tenga "
+            "al menos dos cierres registrados."
+        )
+        return None
+    figura = go.Figure()
+    for serie, nombre, estilo in (
+        (comparacion.simulada, "Simulación", {"color": GRIS, "width": 2, "dash": "dash"}),
+        (comparacion.paper, "Cuenta de prueba", {"color": AZUL, "width": 3}),
+    ):
+        figura.add_scatter(
+            x=pd.DatetimeIndex(serie.index).tz_convert("Europe/Madrid"),
+            y=serie * 100,
+            name=nombre,
+            line=estilo,
+        )
+    figura.update_yaxes(title="Ganancia desde el primer día", ticksuffix=" %")
+    st.plotly_chart(_layout(figura, 300), width="stretch", config={"displayModeBar": False})
+    dif = comparacion.diferencia
+    if comparacion.dias < DIAS_MINIMOS:
+        st.caption(
+            f"Solo hay {int(comparacion.dias)} días de datos: con tan poco tiempo la comparación "
+            "no es concluyente. Vuelve en unas semanas."
+        )
+    elif abs(dif) <= DIFERENCIA_MAXIMA:
+        st.success(f"Se parecen: diferencia de {formato_pct(dif, signo=True)}.")
+    else:
+        st.warning(
+            f"Se separan: la cuenta de prueba va {formato_pct(dif, signo=True)} respecto "
+            "a la simulación. Revisa comisiones, deslizamiento y avisos del robot."
+        )
+    return comparacion
+
+
+def _seccion_listo_para_real(
+    cfg: Config,
+    modo: str,
+    capital: pd.DataFrame,
+    comparacion: Comparacion | None,
+    completa: Simulacion,
+) -> None:
+    paso("07", "¿ESTOY LISTO PARA DINERO REAL?")
+    ruta = cfg.ruta_db_estado(modo)
+    operaciones = leer_tabla(ruta, "operaciones")
+    eventos = leer_tabla(ruta, "eventos")
+    estado = leer_estado(cfg, modo, ahora_ms())
+    dias = (
+        float((capital["fecha"].max() - capital["fecha"].min()) / pd.Timedelta(days=1))
+        if len(capital)
+        else 0.0
+    )
+    caida_paper = (
+        float((capital["equity"] / capital["equity"].cummax() - 1).min()) if len(capital) else 0.0
+    )
+    reciente = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=7)
+    errores = (
+        int(((eventos["nivel"] == "error") & (eventos["fecha"] >= reciente)).sum())
+        if not eventos.empty
+        else 0
+    )
+    requisitos = checklist_real(
+        dias=dias,
+        operaciones=len(operaciones),
+        caida_paper=caida_paper,
+        caida_simulada=completa.estrategia.caida_maxima,
+        errores_recientes=errores,
+        en_marcha=estado.en_marcha and estado.estado == "activo",
+        diferencia=comparacion.diferencia if comparacion else None,
+    )
+    cumplidos = sum(r.cumplido for r in requisitos)
+    st.progress(cumplidos / len(requisitos), text=f"{cumplidos} de {len(requisitos)} cumplidos")
+    st.markdown(
+        "\n".join(
+            f"- {'✅' if r.cumplido else '⬜'} **{r.titulo}.** {r.detalle}" for r in requisitos
+        )
+    )
+    if cumplidos == len(requisitos):
+        st.success(
+            "Se cumplen todas las condiciones. Pasar a dinero real es decisión tuya: "
+            f"empieza con poco (el límite configurado es {formato_eur(cfg.real.capital_maximo)}) "
+            "y asume que puedes perder lo invertido."
+        )
+    else:
+        st.caption(
+            "Es una guía de prudencia, no una recomendación de inversión. Con dinero real "
+            "pueden aparecer diferencias que aquí no se ven."
+        )
+
+
+def seccion_backtests(cfg: Config, modo: str) -> None:
     st.subheader("¿Qué habría pasado en el pasado?")
     st.write(
         "Aquí se reproduce, con precios reales del pasado, lo que habría hecho el robot "
@@ -673,6 +885,17 @@ def seccion_backtests(cfg: Config) -> None:
         "que ocurrirá."
     )
     _simulacion_en_vivo(cfg)
+    clave = f"{cfg.estrategia}|{cfg.riesgo}|{cfg.costes}|{cfg.backtest}"
+    try:
+        completa: Simulacion | None = _simulacion(cfg, clave, None)
+    except ValueError:
+        completa = None
+    if completa is not None:
+        _seccion_por_etapas(cfg, clave, completa)
+        capital = leer_tabla(cfg.ruta_db_estado(modo), "capital")
+        comparacion = _seccion_comparacion(cfg, capital)
+        if modo == "paper":
+            _seccion_listo_para_real(cfg, modo, capital, comparacion, completa)
     with st.expander("¿Cómo usar estos resultados?"):
         st.markdown(
             "**Sirve para:**\n"
@@ -682,10 +905,11 @@ def seccion_backtests(cfg: Config) -> None:
             "**No sirve para:**\n"
             "- Predecir cuánto ganarás. El futuro no repite el pasado.\n"
             "- Fiarse de una cifra suelta: mira siempre ganancia **y** bajada.\n\n"
-            "**Antes de pasar a dinero real, comprueba que:**\n"
-            "1. La cuenta de prueba lleva semanas funcionando sin errores.\n"
-            "2. Sus bajadas se parecen a las de esta simulación.\n"
-            "3. Aguantarías ver el dinero bajar tanto como la «Peor bajada» de arriba."
+            "**Cómo leerlo, en orden:**\n"
+            "1. *Simulación completa*: cómo se comporta con unos ajustes fijos (optimista).\n"
+            "2. *Por etapas*: la versión realista, donde el robot no ve el futuro.\n"
+            "3. *Cuenta de prueba*: lo que pasa de verdad hoy, con precios en directo.\n"
+            "4. *Lista final*: si las tres cuentas cuadran, y solo entonces, plantéate dinero real."
         )
     _informes_detallados(cfg)
 
@@ -731,7 +955,7 @@ def vista_actual(cfg: Config, modo: str, vista: str) -> None:
     elif vista == "Precio y estrategia":
         seccion_mercado(cfg, modo)
     else:
-        seccion_backtests(cfg)
+        seccion_backtests(cfg, modo)
 
 
 def main() -> None:
