@@ -18,11 +18,12 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
+from gaainversiones.backtest.informe import tabla_metricas
 from gaainversiones.config import Config, cargar_config
 from gaainversiones.datos.fuentes import velas_a_dataframe
 from gaainversiones.exchange import crear_exchange
 from gaainversiones.fiscal.exportar import formato_fiscal
-from gaainversiones.formato import formato_dinero, formato_pct
+from gaainversiones.formato import formato_dinero, formato_eur, formato_numero, formato_pct
 from gaainversiones.panel.datos import (
     EstadoBot,
     html_autonomo,
@@ -31,6 +32,14 @@ from gaainversiones.panel.datos import (
     leer_velas_cache,
     listar_informes,
     niveles_estrategia,
+)
+from gaainversiones.panel.simulacion import (
+    GLOSARIO,
+    PERIODOS,
+    Simulacion,
+    nombre_estrategia,
+    simular,
+    veredicto,
 )
 from gaainversiones.tiempo import ahora_ms, timeframe_a_ms
 
@@ -475,32 +484,210 @@ def seccion_mercado(cfg: Config, modo: str) -> None:
 # --- Backtests ----------------------------------------------------------------------------
 
 
-def seccion_backtests(cfg: Config) -> None:
-    st.subheader("Pruebas con precios del pasado")
-    st.write(
-        "Estos informes simulan una estrategia con datos del pasado. "
-        "Sus ganancias no son las de tu cuenta actual."
+@st.cache_data(ttl=3600, show_spinner="Reproduciendo el pasado…")
+def _simulacion(_cfg: Config, clave: str, anios: int | None) -> Simulacion:
+    return simular(_cfg, anios)
+
+
+def _grafico_capital(sim: Simulacion, nombre: str, logaritmica: bool) -> go.Figure:
+    curva, referencia = sim.resultado.curva, sim.resultado.referencia
+    figura = go.Figure()
+    figura.add_scatter(
+        x=referencia.index,
+        y=referencia,
+        name="Comprar Bitcoin y mantenerlo",
+        line={"color": GRIS, "width": 2},
     )
-    informes = listar_informes(cfg.dir_informes)
-    if not informes:
-        st.info("Todavía no hay informes históricos disponibles en este servidor.")
+    figura.add_scatter(
+        x=curva.index, y=curva["equity"], name=nombre, line={"color": AZUL, "width": 3}
+    )
+    figura.update_yaxes(title="Euros", type="log" if logaritmica else "linear")
+    return _layout(figura, 380)
+
+
+def _grafico_caidas(sim: Simulacion, nombre: str) -> go.Figure:
+    curva, referencia = sim.resultado.curva, sim.resultado.referencia
+    figura = go.Figure()
+    for serie, etiqueta, color in (
+        (referencia, "Comprar Bitcoin y mantenerlo", GRIS),
+        (curva["equity"], nombre, AZUL),
+    ):
+        caida = (serie / serie.cummax() - 1) * 100
+        figura.add_scatter(
+            x=caida.index,
+            y=caida,
+            name=etiqueta,
+            fill="tozeroy",
+            line={"color": color, "width": 1},
+        )
+    figura.update_yaxes(title="Bajada desde el máximo", ticksuffix=" %")
+    return _layout(figura, 280)
+
+
+def _simulacion_en_vivo(cfg: Config) -> None:
+    nombre = nombre_estrategia(cfg.estrategia.nombre)
+    paso("01", "ELIGE QUÉ PERIODO REPRODUCIR")
+    periodo = st.radio("Periodo", list(PERIODOS), horizontal=True, label_visibility="collapsed")
+    try:
+        clave = f"{cfg.estrategia}|{cfg.riesgo}|{cfg.costes}"
+        sim = _simulacion(cfg, clave, PERIODOS[periodo])
+    except ValueError as e:
+        st.info(f"No se puede reproducir el pasado todavía: {e}")
         return
+    m, ref, res = sim.estrategia, sim.referencia, sim.resultado
+    inicial = formato_eur(m.capital_inicial)
     st.caption(
-        "Simulaciones históricas con la configuración de cada informe. "
-        "Pueden diferir de la estrategia actual y no predicen ganancias futuras."
+        f"{nombre} sobre {cfg.mercado.simbolo} del {res.inicio:%d/%m/%Y} al {res.fin:%d/%m/%Y}, "
+        f"empezando con {inicial} y con las comisiones reales de Kraken."
     )
-    elegido = st.selectbox(
-        "Elegir una prueba",
-        informes,
-        format_func=lambda i: (
-            f"{i.fecha:%d/%m/%Y %H:%M} UTC · "
-            f"{'Prueba por etapas' if i.tipo == 'walkforward' else 'Simulación histórica'} · "
-            f"{i.estrategia.replace('_', ' ')}"
+
+    paso("02", "LA CONCLUSIÓN")
+    titular, detalle, nivel = veredicto(m, ref)
+    getattr(st, nivel)(f"**{titular}.** {detalle}")
+
+    paso("03", "LOS NÚMEROS QUE IMPORTAN")
+    columnas = st.columns(4)
+    columnas[0].metric(
+        f"Dinero final (de {inicial})",
+        formato_eur(m.capital_final),
+        f"Mantener: {formato_eur(ref.capital_final)}",
+        delta_color="off",
+        delta_arrow="off",
+        help=GLOSARIO["Capital final"],
+    )
+    columnas[1].metric(
+        "Peor bajada",
+        formato_pct(m.caida_maxima),
+        f"Mantener: {formato_pct(ref.caida_maxima)}",
+        delta_color="off",
+        delta_arrow="off",
+        help=GLOSARIO["Caída máxima"],
+    )
+    columnas[2].metric(
+        "Operaciones ganadoras",
+        formato_pct(m.pct_ganadoras, 0),
+        f"{m.operaciones} operaciones",
+        delta_color="off",
+        delta_arrow="off",
+        help=GLOSARIO["% ganadoras"],
+    )
+    columnas[3].metric(
+        "Tiempo con dinero invertido",
+        formato_pct(m.exposicion, 0),
+        f"Ganancia anual media: {formato_pct(m.cagr)}",
+        delta_color="off",
+        delta_arrow="off",
+        help=GLOSARIO["Tiempo invertido"],
+    )
+
+    paso("04", "CÓMO EVOLUCIONÓ TU DINERO")
+    logaritmica = st.checkbox(
+        "Escala logarítmica",
+        value=True,
+        help=(
+            "Cada línea horizontal multiplica el dinero por el mismo factor (por ejemplo, x10). "
+            "Con periodos largos permite ver bien a las dos líneas; sin ella, la de menor "
+            "ganancia parece plana."
         ),
     )
-    if elegido is not None:
-        st.caption(f"{elegido.tipo.capitalize()} · {elegido.fecha:%d/%m/%Y %H:%M} UTC")
-        components.html(html_autonomo(elegido.ruta), height=1600, scrolling=True)
+    st.plotly_chart(
+        _grafico_capital(sim, nombre, logaritmica),
+        width="stretch",
+        config={"displayModeBar": False},
+    )
+    st.subheader("Cuánto bajó desde su máximo")
+    st.caption(
+        "Cada bajada es dinero que habrías visto desaparecer de la pantalla antes de recuperarse. "
+        "Esta gráfica muestra lo que el robot intenta evitar."
+    )
+    st.plotly_chart(_grafico_caidas(sim, nombre), width="stretch", config={"displayModeBar": False})
+
+    with st.expander("Todas las métricas, explicadas"):
+        filas = tabla_metricas({"estrategia": m, "referencia": ref})
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Métrica": [f[0] for f in filas],
+                    nombre: [f[1] for f in filas],
+                    "Comprar y mantener": [f[2] for f in filas],
+                    "Qué significa": [GLOSARIO.get(f[0], "") for f in filas],
+                }
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+    with st.expander("Cómo se ha simulado"):
+        c, r = cfg.costes, cfg.riesgo
+        st.markdown(
+            f"- Decide al **cierre** de cada vela y opera en la **apertura siguiente**; "
+            f"nunca usa el precio de la propia vela.\n"
+            f"- Cada operación paga una comisión de {formato_pct(c.comision_taker, 2)} y "
+            f"{formato_numero(c.deslizamiento_pb, 1)} pb de deslizamiento (diferencia entre el "
+            f"precio esperado y el real).\n"
+            f"- Arriesga el {formato_pct(r.riesgo_por_operacion)} del dinero en cada compra, con "
+            f"una orden de protección (stop) a {formato_numero(r.sl_atr, 1)} veces la volatilidad "
+            f"media diaria (ATR).\n"
+            f"- Se detiene si pierde {formato_pct(r.caida_max, 0)} desde su máximo."
+        )
+
+
+def _informes_detallados(cfg: Config) -> None:
+    informes = listar_informes(cfg.dir_informes)
+    if not informes:
+        return
+    with st.expander("Informes detallados (para quien quiera ver todos los datos)"):
+        st.write(
+            "Son informes completos generados con otras estrategias o ajustes. Pueden diferir "
+            "de la estrategia actual del robot."
+        )
+        st.markdown(
+            "- **Simulación histórica:** una sola pasada por el pasado con unos ajustes fijos. "
+            "Es optimista: los ajustes se eligieron sabiendo cómo acabó.\n"
+            "- **Prueba por etapas (walk-forward):** el robot elige sus ajustes con 3 años de "
+            "datos y se examina en los 6 meses siguientes, que no ha visto. Se repite hasta hoy. "
+            "Es la prueba más honesta, y suele salir peor."
+        )
+        elegido = st.selectbox(
+            "Elegir un informe",
+            informes,
+            format_func=lambda i: (
+                f"{i.fecha:%d/%m/%Y} · "
+                f"{'Prueba por etapas' if i.tipo == 'walkforward' else 'Simulación histórica'} · "
+                f"{nombre_estrategia(i.estrategia)}"
+            ),
+        )
+        if elegido is not None:
+            components.html(html_autonomo(elegido.ruta), height=1600, scrolling=True)
+
+
+def seccion_backtests(cfg: Config) -> None:
+    st.subheader("¿Qué habría pasado en el pasado?")
+    st.write(
+        "Aquí se reproduce, con precios reales del pasado, lo que habría hecho el robot "
+        "con sus reglas actuales. Sirve para **entender cómo se comporta**: cuánto gana "
+        "y, sobre todo, cuánto baja en los malos momentos."
+    )
+    st.info(
+        "No es tu cuenta de prueba. Ésta es una repetición del pasado; la cuenta de prueba "
+        "opera hoy con precios en directo y dinero ficticio. Y lo ocurrido no garantiza lo "
+        "que ocurrirá."
+    )
+    _simulacion_en_vivo(cfg)
+    with st.expander("¿Cómo usar estos resultados?"):
+        st.markdown(
+            "**Sirve para:**\n"
+            "- Ver si la estrategia compensa el riesgo frente a simplemente mantener Bitcoin.\n"
+            "- Saber qué bajadas son normales y no asustarte cuando ocurran.\n"
+            "- Comparar periodos: ¿funciona igual en los últimos 2 años que en todo el pasado?\n\n"
+            "**No sirve para:**\n"
+            "- Predecir cuánto ganarás. El futuro no repite el pasado.\n"
+            "- Fiarse de una cifra suelta: mira siempre ganancia **y** bajada.\n\n"
+            "**Antes de pasar a dinero real, comprueba que:**\n"
+            "1. La cuenta de prueba lleva semanas funcionando sin errores.\n"
+            "2. Sus bajadas se parecen a las de esta simulación.\n"
+            "3. Aguantarías ver el dinero bajar tanto como la «Peor bajada» de arriba."
+        )
+    _informes_detallados(cfg)
 
 
 # --- Página -------------------------------------------------------------------------------
@@ -560,7 +747,7 @@ def main() -> None:
     st.markdown(
         '<div class="cabecera"><span class="marca">GAA / INVERSIONES</span>'
         f'<span class="modo{" real" if modo == "real" else ""}">'
-        f"{'Dinero real' if modo == 'real' else 'Simulación · Sin dinero real'}</span></div>",
+        f"{'Dinero real' if modo == 'real' else 'Cuenta de prueba · Sin dinero real'}</span></div>",
         unsafe_allow_html=True,
     )
     st.title("Tu robot, de un vistazo")

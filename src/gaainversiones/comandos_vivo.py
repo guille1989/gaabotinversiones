@@ -320,6 +320,10 @@ def cmd_panel(cfg: Config, args: argparse.Namespace) -> int:
         "true" if args.sin_navegador else "false",
         "--browser.gatherUsageStats",
         "false",
+        "--theme.base",
+        "light",  # el diseño del panel es claro; así no depende del tema del sistema
+        "--theme.primaryColor",
+        "#2456a6",
     ]
     try:
         return subprocess.run(orden, env=entorno, cwd=cfg.raiz, check=False).returncode
